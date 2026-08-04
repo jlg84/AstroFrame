@@ -6,6 +6,7 @@ from PySide6.QtCore import QSettings, QThread, Qt, Signal, Slot
 from astropy.coordinates import SkyCoord
 from PySide6.QtWidgets import (
     QCheckBox,
+    QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFrame,
@@ -92,7 +93,7 @@ class MainWindow(QMainWindow):
             Qt.ConnectionType.QueuedConnection,
         )
 
-        self.setWindowTitle("AstroFrame 0.4.2a")
+        self.setWindowTitle("AstroFrame 0.5.0.1")
         self.resize(1320, 860)
         self.setMinimumSize(1040, 680)
 
@@ -166,10 +167,30 @@ class MainWindow(QMainWindow):
         self.solve_button.clicked.connect(lambda _checked=False: self.plate_solve())
         reference.layout.addWidget(self.solve_button)
 
-        self.assisted_solve_button = QPushButton("Target-assisted solve…")
+        strategy_row = QHBoxLayout()
+        strategy_label = QLabel("Solver strategy")
+        strategy_label.setObjectName("fieldLabel")
+        self.solver_strategy = QComboBox()
+        self.solver_strategy.addItem("Smart", "smart")
+        self.solver_strategy.addItem("Local only", "local")
+        self.solver_strategy.addItem("Online only", "online")
+        saved_strategy = str(self.settings.value("solverStrategy", "smart"))
+        saved_index = self.solver_strategy.findData(saved_strategy)
+        self.solver_strategy.setCurrentIndex(saved_index if saved_index >= 0 else 0)
+        self.solver_strategy.currentIndexChanged.connect(
+            lambda _index: self.settings.setValue(
+                "solverStrategy", self.solver_strategy.currentData()
+            )
+        )
+        strategy_row.addWidget(strategy_label)
+        strategy_row.addStretch()
+        strategy_row.addWidget(self.solver_strategy)
+        reference.layout.addLayout(strategy_row)
+
+        self.assisted_solve_button = QPushButton("Target Hint…")
         self.assisted_solve_button.setEnabled(False)
         self.assisted_solve_button.setToolTip(
-            "Give ASTAP an approximate target centre for difficult images."
+            "Give the local solver an approximate target centre for difficult images."
         )
         self.assisted_solve_button.clicked.connect(self.target_assisted_solve)
         reference.layout.addWidget(self.assisted_solve_button)
@@ -387,8 +408,9 @@ class MainWindow(QMainWindow):
 
         hint, accepted = QInputDialog.getText(
             self,
-            "Target-assisted ASTAP solve",
-            "Enter a target name (for example NGC 2070 or Omega Centauri)\n"
+            "Target Hint",
+            "Enter an object name (for example Tarantula Nebula, NGC 2070,\n"
+            "47 Tuc, or Omega Centauri)\n"
             "or RA hours and Dec degrees separated by a comma\n"
             "(for example 5.6453, -69.1):",
         )
