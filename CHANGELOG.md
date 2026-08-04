@@ -13,3 +13,16 @@ Initial working prototype.
 - Drag and rotation controls
 - PNG overlay export
 - Basic NINA value copying
+
+## 0.2.1 — 2026-08-04
+
+### Changed
+
+- Reworked the native interface with a cohesive dark inspector layout.
+- Separated controls into Reference Image, Equipment, Framing, and Export sections.
+- Renamed the ambiguous reference-width control to Image angular width.
+- Added explanatory text that distinguishes background image scale from rig FOV.
+- Added Reset view and Reset framing controls.
+- Added rig names directly to the FOV overlays.
+- Increased the image workspace by narrowing the inspector.
+- Restores window geometry, selected rigs, reference width, and last image directory.
