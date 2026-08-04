@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AstroFrame 0.1</title>
+<style>
+:root{
+  color-scheme: dark;
+  --bg:#111317; --panel:#1a1d23; --line:#343944; --text:#f2f4f8;
+  --muted:#aab1bd; --accent:#ffd83d; --button:#2b3039;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+header{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between}
+header h1{font-size:20px;margin:0}
+main{display:grid;grid-template-columns:300px 1fr;min-height:calc(100vh - 61px)}
+aside{padding:18px;border-right:1px solid var(--line);background:var(--panel)}
+section{padding:18px;min-width:0}
+label{display:block;color:var(--muted);font-size:13px;margin:14px 0 6px}
+select,input,button{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:8px;background:var(--button);color:var(--text)}
+button{cursor:pointer;font-weight:600}
+button:hover{filter:brightness(1.12)}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.small{font-size:12px;color:var(--muted);line-height:1.45}
+#stageWrap{height:calc(100vh - 105px);display:flex;align-items:center;justify-content:center;background:#08090c;border:1px solid var(--line);border-radius:12px;overflow:hidden;position:relative}
+#stage{position:relative;transform-origin:center center}
+#image{display:block;max-width:100%;max-height:calc(100vh - 107px);user-select:none}
+#fov{position:absolute;border:3px solid var(--accent);box-shadow:0 0 0 1px rgba(0,0,0,.8);left:50%;top:50%;transform:translate(-50%,-50%) rotate(0deg);cursor:move}
+#label{position:absolute;left:8px;top:8px;background:rgba(0,0,0,.72);color:var(--accent);padding:7px 9px;border-radius:6px;font-size:12px;pointer-events:none}
+#empty{color:var(--muted);text-align:center;padding:30px}
+hr{border:0;border-top:1px solid var(--line);margin:18px 0}
+.value{font-variant-numeric:tabular-nums;color:var(--text)}
+</style>
+</head>
+<body>
+<header><h1>AstroFrame 0.1</h1><div class="small">Mac browser edition</div></header>
+<main>
+<aside>
+  <button id="openBtn">Open reference image…</button>
+  <input id="file" type="file" accept="image/*" hidden>
+
+  <label>Equipment</label>
+  <select id="rig">
+    <option value="1600">ASI1600MM Pro + 442 mm</option>
+    <option value="533">ASI533MC Pro + 1448 mm</option>
+  </select>
+
+  <label>Reference image width on sky (degrees)</label>
+  <input id="imageWidth" type="number" min="0.01" step="0.01" value="3.00">
+  <div class="small">Enter the solved image width when known. This controls the overlay scale.</div>
+
+  <label>Rotation: <span class="value" id="rotValue">0.0°</span></label>
+  <input id="rotation" type="range" min="0" max="180" step="0.1" value="0">
+
+  <label>Overlay opacity</label>
+  <input id="opacity" type="range" min="0.2" max="1" step="0.05" value="1">
+
+  <hr>
+  <div class="small" id="info"></div>
+
+  <hr>
+  <div class="row">
+    <button id="centreBtn">Centre frame</button>
+    <button id="saveBtn">Save PNG</button>
+  </div>
+  <button id="copyBtn" style="margin-top:8px">Copy NINA values</button>
+
+  <label>Target centre</label>
+  <input id="ra" value="12:07:48.848">
+  <input id="dec" value="-51:51:54.087" style="margin-top:8px">
+
+  <p class="small">Drag the yellow rectangle to choose your framing. This first version does not plate-solve automatically.</p>
+</aside>
+
+<section>
+  <div id="stageWrap">
+    <div id="empty">Open an image to begin.</div>
+    <div id="stage" hidden>
+      <img id="image" alt="">
+      <div id="fov"><div id="label"></div></div>
+    </div>
+  </div>
+</section>
+</main>
+
+<script>
+const rigs = {
+  "1600": {name:"ASI1600MM Pro + 442 mm", w:2.294, h:1.738},
+  "533": {name:"ASI533MC Pro + 1448 mm", w:0.448, h:0.448}
+};
+const file = document.querySelector("#file");
+const openBtn = document.querySelector("#openBtn");
+const img = document.querySelector("#image");
+const stage = document.querySelector("#stage");
+const empty = document.querySelector("#empty");
+const fov = document.querySelector("#fov");
+const label = document.querySelector("#label");
+const rig = document.querySelector("#rig");
+const imageWidth = document.querySelector("#imageWidth");
+const rotation = document.querySelector("#rotation");
+const opacity = document.querySelector("#opacity");
+const info = document.querySelector("#info");
+const rotValue = document.querySelector("#rotValue");
+
+let imageNaturalW=0, imageNaturalH=0;
+let offsetX=0, offsetY=0, dragging=false, startX=0, startY=0;
+
+openBtn.onclick=()=>file.click();
+file.onchange=()=>{
+  const f=file.files[0]; if(!f)return;
+  const url=URL.createObjectURL(f);
+  img.onload=()=>{
+    imageNaturalW=img.naturalWidth; imageNaturalH=img.naturalHeight;
+    empty.hidden=true; stage.hidden=false;
+    offsetX=0; offsetY=0; update();
+  };
+  img.src=url;
+};
+
+function update(){
+  if(!imageNaturalW)return;
+  const r=rigs[rig.value];
+  const displayW=img.clientWidth;
+  const displayH=img.clientHeight;
+  const skyW=parseFloat(imageWidth.value)||1;
+  const skyH=skyW*(imageNaturalH/imageNaturalW);
+  const pxW=displayW*(r.w/skyW);
+  const pxH=displayH*(r.h/skyH);
+  fov.style.width=Math.max(8,pxW)+"px";
+  fov.style.height=Math.max(8,pxH)+"px";
+  fov.style.transform=`translate(calc(-50% + ${offsetX}px),calc(-50% + ${offsetY}px)) rotate(${rotation.value}deg)`;
+  fov.style.opacity=opacity.value;
+  rotValue.textContent=parseFloat(rotation.value).toFixed(1)+"°";
+  label.textContent=`${r.name}\n${r.w.toFixed(3)}° × ${r.h.toFixed(3)}°`;
+  info.innerHTML=`<b>${r.name}</b><br>Field of view: ${r.w.toFixed(3)}° × ${r.h.toFixed(3)}°<br>Rotation: ${parseFloat(rotation.value).toFixed(1)}°`;
+}
+
+[rig,imageWidth,rotation,opacity].forEach(el=>el.addEventListener("input",update));
+window.addEventListener("resize",update);
+
+fov.addEventListener("pointerdown",e=>{
+  dragging=true; startX=e.clientX-offsetX; startY=e.clientY-offsetY;
+  fov.setPointerCapture(e.pointerId);
+});
+fov.addEventListener("pointermove",e=>{
+  if(!dragging)return;
+  offsetX=e.clientX-startX; offsetY=e.clientY-startY; update();
+});
+fov.addEventListener("pointerup",()=>dragging=false);
+
+document.querySelector("#centreBtn").onclick=()=>{offsetX=0;offsetY=0;update()};
+
+document.querySelector("#copyBtn").onclick=async()=>{
+  const text=`RA ${document.querySelector("#ra").value}\nDec ${document.querySelector("#dec").value}\nRotation ${parseFloat(rotation.value).toFixed(1)}°`;
+  await navigator.clipboard.writeText(text);
+  openBtn.textContent="Copied NINA values ✓";
+  setTimeout(()=>openBtn.textContent="Open reference image…",1200);
+};
+
+document.querySelector("#saveBtn").onclick=()=>{
+  if(!imageNaturalW)return alert("Open an image first.");
+  const c=document.createElement("canvas");
+  c.width=imageNaturalW; c.height=imageNaturalH;
+  const ctx=c.getContext("2d");
+  ctx.drawImage(img,0,0);
+  const scale=imageNaturalW/img.clientWidth;
+  const r=rigs[rig.value];
+  const skyW=parseFloat(imageWidth.value)||1;
+  const skyH=skyW*(imageNaturalH/imageNaturalW);
+  const rw=imageNaturalW*(r.w/skyW);
+  const rh=imageNaturalH*(r.h/skyH);
+  const cx=imageNaturalW/2+offsetX*scale, cy=imageNaturalH/2+offsetY*scale;
+  ctx.save();
+  ctx.translate(cx,cy);
+  ctx.rotate(parseFloat(rotation.value)*Math.PI/180);
+  ctx.strokeStyle="#ffd83d"; ctx.lineWidth=Math.max(3,imageNaturalW/500);
+  ctx.strokeRect(-rw/2,-rh/2,rw,rh);
+  ctx.restore();
+  const a=document.createElement("a");
+  a.download="AstroFrame_overlay.png";
+  a.href=c.toDataURL("image/png");
+  a.click();
+};
+</script>
+</body>
+</html>
