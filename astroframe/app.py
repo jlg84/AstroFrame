@@ -16,7 +16,15 @@ QWidget {
 
 QWidget#sidebar {
     background: #171B22;
+}
+
+QScrollArea#sidebarScroll {
+    background: #171B22;
     border-right: 1px solid #2A303A;
+}
+
+QScrollArea#sidebarScroll > QWidget > QWidget {
+    background: #171B22;
 }
 
 QLabel#appTitle {
@@ -56,6 +64,28 @@ QLabel#estimatedStatus {
     font-size: 12px;
 }
 
+QLabel#verifiedStatus {
+    color: #63D69A;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#solvingStatus {
+    color: #6DA6FF;
+    font-size: 12px;
+}
+
+QLabel#failedStatus {
+    color: #FF7676;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+QLabel#unknownStatus {
+    color: #8D96A5;
+    font-size: 12px;
+}
+
 QLabel#fieldLabel, QLabel#valueLabel {
     color: #D9DEE6;
     font-weight: 600;
@@ -72,6 +102,7 @@ QLabel#helpText {
 }
 
 QPushButton {
+    min-height: 20px;
     background: #2A303A;
     border: 1px solid #3A424F;
     border-radius: 7px;
@@ -95,6 +126,16 @@ QPushButton#primaryButton {
 
 QPushButton#primaryButton:hover {
     background: #477AE3;
+}
+
+QPushButton#solveButton {
+    background: #24644D;
+    border-color: #347A61;
+    font-weight: 600;
+}
+
+QPushButton#solveButton:hover {
+    background: #2D755B;
 }
 
 QDoubleSpinBox {

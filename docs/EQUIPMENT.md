@@ -97,7 +97,7 @@ Model: SV503ED 80mm
 Aperture (mm): 80
 Native focal length (mm): 560
 Reducer: 0.8
-Effective focal length (mm): 442
+Effective focal length (mm): 448
 
 ## Mount
 

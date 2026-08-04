@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.2
+- ASTAP Auto field is now the first local solve strategy.
+- Added detailed Solver Log and copy button.
+- Added assisted retry with estimated field before online fallback.
+
 ## 0.1.0 — 2026-08-04
 
 Initial working prototype.
