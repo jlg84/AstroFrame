@@ -163,7 +163,7 @@ class MainWindow(QMainWindow):
         self.solve_button = QPushButton("Plate Solve")
         self.solve_button.setObjectName("solveButton")
         self.solve_button.setEnabled(False)
-        self.solve_button.clicked.connect(self.plate_solve)
+        self.solve_button.clicked.connect(lambda _checked=False: self.plate_solve())
         reference.layout.addWidget(self.solve_button)
 
         self.assisted_solve_button = QPushButton("Target-assisted solve…")
@@ -329,7 +329,11 @@ class MainWindow(QMainWindow):
         )
         self._append_solver_log(
             "Solve requested: "
-            + ("Target-assisted" if target_ra_hours is not None else "Blind")
+            + (
+                "Target-assisted"
+                if target_ra_hours is not None and target_dec_deg is not None
+                else "Blind"
+            )
         )
         self.solve_status.style().unpolish(self.solve_status)
         self.solve_status.style().polish(self.solve_status)

@@ -139,11 +139,33 @@ class AstapClient:
 
     @staticmethod
     def _read_header(path: Path) -> fits.Header:
+        """Read ASTAP's WCS sidecar in any format used by its macOS builds."""
+        errors: list[str] = []
+
+        # Some ASTAP builds write a complete FITS file with a .wcs suffix.
+        try:
+            return fits.getheader(path, 0)
+        except Exception as exc:
+            errors.append(f"FITS reader: {exc}")
+
+        # Other builds write one FITS card per text line.
         try:
             return fits.Header.fromtextfile(path, endcard=False)
-        except Exception:
-            raw = path.read_text(encoding="ascii", errors="ignore")
-            return fits.Header.fromstring(raw, sep="\n")
+        except Exception as exc:
+            errors.append(f"text-card reader: {exc}")
+
+        # A third form is a raw stream of contiguous 80-character FITS cards.
+        try:
+            raw = path.read_bytes().decode("ascii", errors="ignore")
+            separator = "\n" if "\n" in raw else ""
+            return fits.Header.fromstring(raw, sep=separator)
+        except Exception as exc:
+            errors.append(f"raw-card reader: {exc}")
+
+        raise PlateSolveError(
+            "Could not parse ASTAP WCS sidecar "
+            f"'{path.name}'. " + " | ".join(errors)
+        )
 
     def solve(
         self,
@@ -239,6 +261,17 @@ class AstapClient:
                     log("ASTAP stderr:\n" + error)
                 log(f"ASTAP elapsed: {elapsed:.2f} s")
 
+            created_files = sorted(
+                path.relative_to(temp_root).as_posix()
+                for path in temp_root.rglob("*")
+                if path.is_file()
+            )
+            if log:
+                log(
+                    "ASTAP temporary files: "
+                    + (", ".join(created_files) if created_files else "(none)")
+                )
+
             sidecars = (
                 working.with_suffix(".wcs"),
                 Path(str(working) + ".wcs"),
@@ -286,9 +319,11 @@ class AstapClient:
                 height_deg = scale_y_arcsec * image_height_px / 3600.0
                 radius_deg = math.hypot(width_deg, height_deg) / 2.0
             except Exception as exc:
+                if log:
+                    log(f"ASTAP WCS import error: {type(exc).__name__}: {exc}")
                 raise PlateSolveError(
                     "ASTAP produced a solution, but AstroFrame could not read "
-                    "its WCS data."
+                    f"its WCS data: {exc}"
                 ) from exc
 
             return PlateSolution(
