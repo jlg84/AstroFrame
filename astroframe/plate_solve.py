@@ -490,6 +490,7 @@ class AstrometryNetClient:
         )
         job_id = self.wait_for_job(submission_id, progress=progress)
         calibration = self.wait_for_solution(job_id, progress=progress)
+        elapsed = time.monotonic() - started
 
         try:
             pixel_scale = float(calibration["pixscale"])
