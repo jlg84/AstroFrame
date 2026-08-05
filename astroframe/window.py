@@ -70,6 +70,10 @@ class MainWindow(QMainWindow):
         self.settings = QSettings("AstroFrame", "AstroFrame")
         self.solve_cache = SolveCache()
         self.current_image_path: str | None = None
+        self.object_hint_name: str | None = None
+        self.object_hint_ra_hours: float | None = None
+        self.object_hint_dec_deg: float | None = None
+        self.object_hint_source: str | None = None
         self.current_image_size = (0, 0)
         self.current_solution: PlateSolution | None = None
         self.solve_thread: QThread | None = None
@@ -303,6 +307,10 @@ class MainWindow(QMainWindow):
             self.solve_request_id += 1
             self.current_image_path = path
             self.current_solution = None
+            self.object_hint_name = None
+            self.object_hint_ra_hours = None
+            self.object_hint_dec_deg = None
+            self.object_hint_source = None
             self.solve_button.setText("Plate Solve")
             self.solve_button.setEnabled(False)
             self.assisted_solve_button.setEnabled(False)
@@ -327,6 +335,10 @@ class MainWindow(QMainWindow):
     def plate_solve(self, target_ra_hours: float | None = None, target_dec_deg: float | None = None) -> None:
         if not self.current_image_path:
             return
+
+        if target_ra_hours is None and target_dec_deg is None:
+            target_ra_hours = self.object_hint_ra_hours
+            target_dec_deg = self.object_hint_dec_deg
 
         # ASTAP is attempted first and needs no credentials. A previously
         # stored Astrometry.net key is passed only as an automatic fallback.
@@ -356,6 +368,15 @@ class MainWindow(QMainWindow):
                 else "Blind"
             )
         )
+        if (
+            self.object_hint_name
+            and target_ra_hours is not None
+            and target_dec_deg is not None
+        ):
+            self._append_solver_log(
+                f"Target Hint: {self.object_hint_name} "
+                f"(RA {target_ra_hours:.6f} h, Dec {target_dec_deg:+.6f}°)"
+            )
         self.solve_status.style().unpolish(self.solve_status)
         self.solve_status.style().polish(self.solve_status)
         self.solve_details.hide()
@@ -413,6 +434,7 @@ class MainWindow(QMainWindow):
             "47 Tuc, or Omega Centauri)\n"
             "or RA hours and Dec degrees separated by a comma\n"
             "(for example 5.6453, -69.1):",
+            text=self.object_hint_name or "",
         )
         if not accepted or not hint.strip():
             return
@@ -435,18 +457,34 @@ class MainWindow(QMainWindow):
             if not (0.0 <= ra_hours < 24.0 and -90.0 <= dec_deg <= 90.0):
                 raise ValueError("Coordinates are outside the valid range.")
         except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "Target could not be resolved",
-                f"AstroFrame could not resolve '{text}'.\n\n"
-                "Try decimal RA hours and Dec degrees, such as:\n"
-                "5.6453, -69.1\n\n"
-                f"Details: {exc}",
+            self._append_solver_log(
+                f"WARNING: Target Hint '{text}' could not be resolved."
+            )
+            self._append_solver_log(f"Reason: {exc}")
+            self._append_solver_log(
+                "Target Hint was not changed. Plate Solve remains available."
             )
             self._show_estimated_status()
+            self.statusBar().showMessage(
+                "Target Hint could not be resolved",
+                5000,
+            )
             return
 
-        self.plate_solve(ra_hours, dec_deg)
+        self.object_hint_name = text
+        self.object_hint_ra_hours = ra_hours
+        self.object_hint_dec_deg = dec_deg
+        self.object_hint_source = "manual"
+
+        self._append_solver_log(
+            f"Target Hint stored: {text} "
+            f"(RA {ra_hours:.6f} h, Dec {dec_deg:+.6f}°)"
+        )
+        self._show_estimated_status()
+        self.statusBar().showMessage(
+            f"Target Hint set: {text}",
+            4000,
+        )
 
     def clear_solution(self) -> None:
         if not self.current_image_path:
