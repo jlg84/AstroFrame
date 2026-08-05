@@ -8,6 +8,7 @@ import shutil
 import shlex
 import subprocess
 import tempfile
+import threading
 import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -23,7 +24,11 @@ API_ROOT = "https://nova.astrometry.net/api"
 
 
 class PlateSolveError(RuntimeError):
-    """Raised when the remote solver cannot produce a usable solution."""
+    """Raised when a solver cannot produce a usable solution."""
+
+
+class SolveCancelled(PlateSolveError):
+    """Raised when the user cancels an active plate solve."""
 
 
 @dataclass(frozen=True)
@@ -44,6 +49,50 @@ class PlateSolution:
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> "PlateSolution":
         return cls(**data)
+
+
+@dataclass
+class PendingOnlineSolve:
+    submission_id: int
+    job_id: int | None = None
+    created_at: float = 0.0
+
+
+_PENDING_ONLINE_SOLVES: dict[str, PendingOnlineSolve] = {}
+_PENDING_ONLINE_SOLVES_LOCK = threading.Lock()
+
+
+def _pending_online_get(image_hash: str) -> PendingOnlineSolve | None:
+    with _PENDING_ONLINE_SOLVES_LOCK:
+        pending = _PENDING_ONLINE_SOLVES.get(image_hash)
+        if pending is None:
+            return None
+        return PendingOnlineSolve(
+            submission_id=pending.submission_id,
+            job_id=pending.job_id,
+            created_at=pending.created_at,
+        )
+
+
+def _pending_online_save(
+    image_hash: str,
+    submission_id: int,
+    *,
+    job_id: int | None = None,
+) -> None:
+    with _PENDING_ONLINE_SOLVES_LOCK:
+        _PENDING_ONLINE_SOLVES[image_hash] = PendingOnlineSolve(
+            submission_id=submission_id,
+            job_id=job_id,
+            created_at=time.monotonic(),
+        )
+
+
+def _pending_online_set_job(image_hash: str, job_id: int) -> None:
+    with _PENDING_ONLINE_SOLVES_LOCK:
+        pending = _PENDING_ONLINE_SOLVES.get(image_hash)
+        if pending is not None:
+            pending.job_id = job_id
 
 
 class SolveCache:
@@ -108,10 +157,20 @@ class AstapClient:
     ) -> None:
         self.executable = self.find_executable(executable)
         self.timeout_seconds = timeout_seconds
+        self._process_lock = threading.Lock()
+        self._process: subprocess.Popen[str] | None = None
         if self.executable is None:
             raise PlateSolveError(
                 "ASTAP was not found. Expected it in /Applications/ASTAP.app."
             )
+
+
+    def cancel(self) -> None:
+        """Terminate the active ASTAP process, if one is running."""
+        with self._process_lock:
+            process = self._process
+        if process is not None and process.poll() is None:
+            process.terminate()
 
     @classmethod
     def find_executable(
@@ -180,6 +239,7 @@ class AstapClient:
         use_auto_fov: bool = True,
         progress: Callable[[str], None] | None = None,
         log: Callable[[str], None] | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> PlateSolution:
         source = Path(image_path)
         if not source.exists():
@@ -217,11 +277,11 @@ class AstapClient:
                     "-r", f"{search_radius_deg or 10.0:.3f}",
                 ])
                 if progress:
-                    progress("Target-assisted solve with ASTAP…")
+                    progress("Searching locally with ASTAP…")
             else:
                 command.extend(["-r", f"{search_radius_deg or 180.0:.3f}"])
                 if progress:
-                    progress("Blind-solving locally with ASTAP…")
+                    progress("Searching locally with ASTAP…")
 
             if log:
                 log(f"ASTAP executable: {self.executable}")
@@ -236,19 +296,50 @@ class AstapClient:
                 log("Command: " + " ".join(shlex.quote(part) for part in command))
 
             started = time.monotonic()
+            process = subprocess.Popen(
+                command,
+                cwd=temp_root,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+            with self._process_lock:
+                self._process = process
+
             try:
-                result = subprocess.run(
-                    command,
-                    cwd=temp_root,
-                    capture_output=True,
-                    text=True,
-                    timeout=self.timeout_seconds,
-                    check=False,
+                while process.poll() is None:
+                    if cancel_event is not None and cancel_event.is_set():
+                        process.terminate()
+                        try:
+                            process.wait(timeout=2.0)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait()
+                        raise SolveCancelled("Solve cancelled by user.")
+
+                    if time.monotonic() - started >= self.timeout_seconds:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=2.0)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait()
+                        raise PlateSolveError(
+                            f"ASTAP did not finish within {int(self.timeout_seconds)} seconds."
+                        )
+
+                    time.sleep(0.1)
+
+                stdout, stderr = process.communicate()
+                if cancel_event is not None and cancel_event.is_set():
+                    raise SolveCancelled("Solve cancelled by user.")
+                result = subprocess.CompletedProcess(
+                    command, process.returncode, stdout, stderr
                 )
-            except subprocess.TimeoutExpired as exc:
-                raise PlateSolveError(
-                    f"ASTAP did not finish within {int(self.timeout_seconds)} seconds."
-                ) from exc
+            finally:
+                with self._process_lock:
+                    if self._process is process:
+                        self._process = None
 
             elapsed = time.monotonic() - started
             if log:
@@ -289,7 +380,7 @@ class AstapClient:
                 raise PlateSolveError(message)
 
             if progress:
-                progress("Reading ASTAP solution…")
+                progress("Verifying solution…")
 
             try:
                 header = self._read_header(wcs_path)
@@ -349,6 +440,7 @@ class AstrometryNetClient:
         *,
         timeout_seconds: float = 90.0,
         session: requests.Session | None = None,
+        cancel_event: threading.Event | None = None,
     ) -> None:
         if not api_key.strip():
             raise ValueError("An Astrometry.net API key is required.")
@@ -356,6 +448,16 @@ class AstrometryNetClient:
         self.timeout_seconds = timeout_seconds
         self.http = session or requests.Session()
         self.session_id: str | None = None
+        self.cancel_event = cancel_event or threading.Event()
+
+    def cancel(self) -> None:
+        """Stop polling and close the HTTP session."""
+        self.cancel_event.set()
+        self.http.close()
+
+    def _check_cancelled(self) -> None:
+        if self.cancel_event.is_set():
+            raise SolveCancelled("Solve cancelled by user.")
 
     def _post(
         self,
@@ -364,24 +466,38 @@ class AstrometryNetClient:
         *,
         files: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        response = self.http.post(
-            f"{API_ROOT}/{endpoint.lstrip('/')}",
-            data={"request-json": json.dumps(payload)},
-            files=files,
-            timeout=self.timeout_seconds,
-        )
-        response.raise_for_status()
+        self._check_cancelled()
+        try:
+            response = self.http.post(
+                f"{API_ROOT}/{endpoint.lstrip('/')}",
+                data={"request-json": json.dumps(payload)},
+                files=files,
+                timeout=self.timeout_seconds,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            if self.cancel_event.is_set():
+                raise SolveCancelled("Solve cancelled by user.") from exc
+            raise
+        self._check_cancelled()
         result = response.json()
         if result.get("status") == "error":
             raise PlateSolveError(result.get("errormessage", "Astrometry.net returned an error."))
         return result
 
     def _get(self, endpoint: str) -> dict[str, Any]:
-        response = self.http.get(
-            f"{API_ROOT}/{endpoint.lstrip('/')}",
-            timeout=self.timeout_seconds,
-        )
-        response.raise_for_status()
+        self._check_cancelled()
+        try:
+            response = self.http.get(
+                f"{API_ROOT}/{endpoint.lstrip('/')}",
+                timeout=self.timeout_seconds,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            if self.cancel_event.is_set():
+                raise SolveCancelled("Solve cancelled by user.") from exc
+            raise
+        self._check_cancelled()
         return response.json()
 
     def login(self) -> None:
@@ -445,8 +561,9 @@ class AstrometryNetClient:
             if jobs:
                 return int(jobs[0])
             if progress:
-                progress("Waiting for Astrometry.net to start the solve…")
-            time.sleep(poll_seconds)
+                progress("Waiting for Astrometry.net…")
+            if self.cancel_event.wait(poll_seconds):
+                raise SolveCancelled("Solve cancelled by user.")
         raise PlateSolveError("Timed out while waiting for Astrometry.net to start the solve.")
 
     def wait_for_solution(
@@ -465,9 +582,10 @@ class AstrometryNetClient:
             if status == "failure":
                 raise PlateSolveError("Astrometry.net could not solve this image.")
             if progress:
-                progress("Matching the star field…")
-            time.sleep(poll_seconds)
-        raise PlateSolveError("Timed out while waiting for the plate-solve result.")
+                progress("Astrometry.net is solving your image…")
+            if self.cancel_event.wait(poll_seconds):
+                raise SolveCancelled("Solve cancelled by user.")
+        raise PlateSolveError("Astrometry.net did not return a solution before the timeout.")
 
     def solve(
         self,
@@ -477,19 +595,49 @@ class AstrometryNetClient:
         image_height_px: int,
         estimated_width_deg: float | None = None,
         progress: Callable[[str], None] | None = None,
+        log: Callable[[str], None] | None = None,
     ) -> PlateSolution:
         started = time.monotonic()
+        image_hash = SolveCache.image_hash(image_path)
+
         if progress:
             progress("Connecting to Astrometry.net…")
         self.login()
-        if progress:
-            progress("Uploading reference image…")
-        submission_id = self.upload(
-            image_path,
-            estimated_width_deg=estimated_width_deg,
-        )
-        job_id = self.wait_for_job(submission_id, progress=progress)
+
+        pending = _pending_online_get(image_hash)
+        if pending is not None:
+            submission_id = pending.submission_id
+            job_id = pending.job_id
+            if log:
+                log(
+                    "Existing Astrometry.net submission found; "
+                    "resuming previous online solve."
+                )
+            if progress:
+                progress("Resuming previous Astrometry.net solve…")
+        else:
+            if progress:
+                progress("Uploading reference image…")
+            submission_id = self.upload(
+                image_path,
+                estimated_width_deg=estimated_width_deg,
+            )
+            _pending_online_save(image_hash, submission_id)
+            job_id = None
+            if log:
+                log(f"Astrometry.net submission ID: {submission_id}")
+
+        if job_id is None:
+            job_id = self.wait_for_job(submission_id, progress=progress)
+            _pending_online_set_job(image_hash, job_id)
+            if log:
+                log(f"Astrometry.net job ID: {job_id}")
+        elif log:
+            log(f"Resuming Astrometry.net job ID: {job_id}")
+
         calibration = self.wait_for_solution(job_id, progress=progress)
+        if progress:
+            progress("Retrieving solution…")
         elapsed = time.monotonic() - started
 
         try:
