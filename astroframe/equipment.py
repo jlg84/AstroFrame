@@ -38,3 +38,13 @@ RIGS = (
         colour="#42C8FF",
     ),
 )
+
+
+USER_RIG_COLOURS = (
+    "#FFD83D",
+    "#42C8FF",
+    "#C084FC",
+    "#34D399",
+    "#FB7185",
+    "#F59E0B",
+)

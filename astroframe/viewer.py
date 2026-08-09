@@ -61,9 +61,13 @@ class ImageViewer(QGraphicsView):
         self.setScene(self.scene)
         self.pixmap_item: QGraphicsPixmapItem | None = None
         self.overlays: dict[str, OverlayItem] = {}
+        self.rig_rotation_offsets: dict[str, float] = {}
         self.reference_width_deg = 3.0
         self.current_rotation_deg = 0.0
         self.setBackgroundBrush(QBrush(QColor("#090B0F")))
+
+        self.minimum_zoom = 0.005
+        self.maximum_zoom = 20.0
 
     @property
     def has_image(self) -> bool:
@@ -77,6 +81,9 @@ class ImageViewer(QGraphicsView):
         visible_rigs = [item.rig for item in self.overlays.values() if item.isVisible()]
         self.scene.clear()
         self.overlays.clear()
+        # Per-setup rotations are a temporary framing experiment for the
+        # current reference image, so reset them when a new image is loaded.
+        self.rig_rotation_offsets.clear()
 
         self.pixmap_item = self.scene.addPixmap(pixmap)
         self.pixmap_item.setZValue(0)
@@ -89,10 +96,37 @@ class ImageViewer(QGraphicsView):
         self.image_loaded.emit(path, pixmap.width(), pixmap.height())
 
     def wheelEvent(self, event) -> None:
+        """Smooth, bounded and fully reversible zoom."""
         if self.pixmap_item is None:
+            event.ignore()
             return
-        factor = 1.18 if event.angleDelta().y() > 0 else 1 / 1.18
-        self.scale(factor, factor)
+
+        delta = event.pixelDelta().y()
+        if delta == 0:
+            delta = event.angleDelta().y()
+        if delta == 0:
+            event.ignore()
+            return
+
+        # Small trackpad deltas should feel smooth; a normal mouse-wheel
+        # notch still gives a useful but not excessive zoom step.
+        steps = delta / 120.0 if abs(delta) >= 120 else delta / 60.0
+        factor = 1.15 ** steps
+
+        current = abs(self.transform().m11())
+        if current <= 0:
+            current = 1.0
+
+        desired = min(
+            self.maximum_zoom,
+            max(self.minimum_zoom, current * factor),
+        )
+        actual_factor = desired / current
+
+        if abs(actual_factor - 1.0) > 1e-6:
+            self.scale(actual_factor, actual_factor)
+
+        event.accept()
 
     def set_reference_width(self, degrees: float) -> None:
         self.reference_width_deg = max(0.01, degrees)
@@ -106,14 +140,39 @@ class ImageViewer(QGraphicsView):
             self.scene.addItem(item)
             self.overlays[rig.key] = item
             item.setPos(self.scene.sceneRect().center())
-            item.setRotation(self.current_rotation_deg)
+            item.setRotation(
+                self.current_rotation_deg
+                + self.rig_rotation_offsets.get(rig.key, 0.0)
+            )
         self.overlays[rig.key].setVisible(visible)
         self._refresh_overlay_sizes()
 
     def set_rotation(self, degrees: float) -> None:
         self.current_rotation_deg = degrees
+        for key, item in self.overlays.items():
+            item.setRotation(
+                degrees + self.rig_rotation_offsets.get(key, 0.0)
+            )
+        self.overlay_changed.emit()
+
+    def set_rig_rotation(self, rig_key: str, degrees: float) -> None:
+        """Rotate one setup relative to the global reference rotation."""
+        self.rig_rotation_offsets[rig_key] = degrees % 180.0
+        item = self.overlays.get(rig_key)
+        if item is not None:
+            item.setRotation(
+                self.current_rotation_deg
+                + self.rig_rotation_offsets[rig_key]
+            )
+        self.overlay_changed.emit()
+
+    def rig_rotation(self, rig_key: str) -> float:
+        return self.rig_rotation_offsets.get(rig_key, 0.0)
+
+    def clear_rig_rotations(self) -> None:
+        self.rig_rotation_offsets.clear()
         for item in self.overlays.values():
-            item.setRotation(degrees)
+            item.setRotation(self.current_rotation_deg)
         self.overlay_changed.emit()
 
     def centre_overlays(self) -> None:
@@ -124,17 +183,32 @@ class ImageViewer(QGraphicsView):
             item.setPos(centre)
         self.overlay_changed.emit()
 
-    def reset_view(self) -> None:
-        """Restore fit-to-window zoom and centred panning without changing framing."""
+    def fit_image(self) -> None:
+        """Fit the whole reference image in the viewer."""
         if self.pixmap_item is None:
             return
         self.resetTransform()
-        self.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        self.fitInView(
+            self.scene.sceneRect(),
+            Qt.AspectRatioMode.KeepAspectRatio,
+        )
         self.centerOn(self.scene.sceneRect().center())
+
+    def actual_pixels(self) -> None:
+        """Show the reference image at native pixel scale."""
+        if self.pixmap_item is None:
+            return
+        self.resetTransform()
+        self.centerOn(self.scene.sceneRect().center())
+
+    def reset_view(self) -> None:
+        """Backward-compatible alias for Fit Image."""
+        self.fit_image()
 
     def reset_framing(self, reference_width_deg: float = 3.0) -> None:
         """Restore manual image scale, rotation and overlay positions."""
         self.set_reference_width(reference_width_deg)
+        self.clear_rig_rotations()
         self.set_rotation(0.0)
         self.centre_overlays()
 

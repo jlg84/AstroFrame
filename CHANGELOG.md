@@ -1,10 +1,5 @@
 # Changelog
 
-## 0.4.2
-- ASTAP Auto field is now the first local solve strategy.
-- Added detailed Solver Log and copy button.
-- Added assisted retry with estimated field before online fallback.
-
 ## 0.1.0 — 2026-08-04
 
 Initial working prototype.
@@ -31,3 +26,15 @@ Initial working prototype.
 - Added rig names directly to the FOV overlays.
 - Increased the image workspace by narrowing the inspector.
 - Restores window geometry, selected rigs, reference width, and last image directory.
+
+## 0.6.0
+
+- Added solver preference controls and per-Mac API-key setup.
+- Added live solver diagnostics and copyable log.
+- Made ASTAP Field=Auto the default local solve.
+- Fixed Online only so it never invokes ASTAP.
+
+## 0.7.0-dev2
+- Blue/default Plate Solve action in target confirmation.
+- Compound target hints with spherical midpoint calculation.
+- Clear Astrometry.net accepted/queued/solving status with elapsed time and IDs.

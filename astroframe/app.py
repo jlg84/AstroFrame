@@ -10,7 +10,7 @@ STYLE_SHEET = """
 QWidget {
     background: #11141A;
     color: #EEF1F5;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-family: "Helvetica Neue", Arial, sans-serif;
     font-size: 13px;
 }
 
@@ -93,7 +93,6 @@ QLabel#fieldLabel, QLabel#valueLabel {
 
 QLabel#valueLabel {
     color: #FFFFFF;
-    font-variant-numeric: tabular-nums;
 }
 
 QLabel#helpText {
