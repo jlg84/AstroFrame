@@ -1,52 +1,61 @@
 # AstroFrame
 
-AstroFrame is a lightweight astrophotography framing companion for comparing a reference image with the field of view of a user's own telescope and camera combinations.
+AstroFrame is a macOS astrophotography framing and planning companion. Give it a reference image and it helps answer the practical question: **can I reproduce this framing with my own equipment, and what should I send to NINA?**
 
 ## Current status
 
-**Version 0.1.0 — working browser prototype**
+**AstroFrame 1.0 — release-candidate development (current tested baseline: RC22x)**
 
-The current build runs locally on macOS in Safari, Chrome, or another modern browser. Nothing is uploaded anywhere.
+AstroFrame is now a packaged Python/Qt desktop application for macOS. The original browser prototype in this repository is historical and no longer represents the current application.
 
-### Working features
+## What AstroFrame does
 
-- Open a local JPEG or PNG reference image
-- Switch between saved imaging rigs
-- Display the calculated field-of-view rectangle
-- Drag the frame over the image
-- Rotate the frame
-- Save an overlay PNG
-- Copy RA, Dec, and rotation values for NINA
+- Loads reference astrophotography images and reuses cached solutions for identical images
+- Plate-solves images locally with ASTAP, with subject hints and Astrometry.net fallback
+- Recognises common target names and aliases from filenames and user hints
+- Displays solved field geometry and catalogue objects on the reference image
+- Imports user catalogue collections and preserves source-coordinate precision
+- Canonicalises duplicate catalogue identities and selects the best available object position
+- Stores multiple observing sites and evaluates target observability
+- Searches beyond the immediate observing window when necessary
+- Stores multiple telescope/camera rigs and compares their fields of view
+- Recommends a better-matching rig when the selected field is unsuitable
+- Supports reframing, rotation and mosaic planning
+- Exports framing information for use in NINA
 
-### Included equipment profiles
+## macOS development build
 
-- ASI1600MM Pro + 442 mm focal length
-- ASI533MC Pro + 1448 mm focal length
+The release-candidate packages include a build script. After unpacking a package in `~/Downloads`:
 
-### Not yet implemented
+```bash
+cd ~/Downloads/AstroFrame_1.0-RC22x
+chmod +x build_mac_app.command
+./build_mac_app.command
+```
 
-- Automatic plate solving
-- AstroBin URL import
-- Accurate RA/Dec updates when the frame is dragged
-- Side-by-side rig comparison
-- Equipment profile editor
-- Direct NINA export
+The script builds the macOS application from the supplied source. ASTAP is recommended for local plate solving; Astrometry.net can be used as a fallback where configured.
 
-## Run on a Mac
+## Core workflow
 
-1. Download or clone the repository.
-2. Open the `app` folder.
-3. Double-click `AstroFrame.html`.
+1. Load a reference image.
+2. Let AstroFrame identify/plate-solve it, or confirm/provide the subject when asked.
+3. Choose an observing site and imaging rig.
+4. Inspect object markers, observability and equipment advice.
+5. Adjust framing/rotation or build a mosaic if needed.
+6. Export the result for NINA.
 
-## Project direction
+## Documentation
 
-The immediate goal is to make it quick to answer:
+- [Roadmap](ROADMAP.md)
+- [Changelog](CHANGELOG.md)
+- [Equipment notes](docs/EQUIPMENT.md)
+- [Observing sites](docs/OBSERVING_SITES.md)
+- [Using AstroFrame with NINA](docs/USING_WITH_NINA.md)
+- [Project vision](VISION.md)
 
-1. Can I reproduce this image with my equipment?
-2. Which rig is the best match?
-3. What centre coordinates and camera rotation should I use in NINA?
+## Development note
 
-See [ROADMAP.md](ROADMAP.md) for the planned milestones.
+AstroFrame is under active private development. RC22x is the current stabilisation baseline after extensive testing of plate solving, catalogue imports, coordinate precision, object-marker canonicalisation, observability, equipment framing, mosaics and NINA handoff.
 
 ## Repository owner
 
