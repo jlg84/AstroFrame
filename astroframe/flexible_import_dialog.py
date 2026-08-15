@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QFormLayout,
+    QFrame,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -50,7 +51,7 @@ def run_flexible_collection_import_dialog(self, path: str):
 
     scroll = QScrollArea(dialog)
     scroll.setWidgetResizable(True)
-    scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+    scroll.setFrameShape(QFrame.Shape.NoFrame)
     body = QWidget()
     layout = QVBoxLayout(body)
     scroll.setWidget(body)
