@@ -10,7 +10,7 @@ AstroFrame is now a packaged Python/Qt desktop application for macOS. The origin
 
 ## What AstroFrame does
 
-- Loads reference astrophotography images and reuses cached solutions for identical images
+- Loads reference astrophotography images, including JPEG, PNG and TIFF, and reuses cached solutions for identical images
 - Plate-solves images locally with ASTAP, with subject hints and Astrometry.net fallback
 - Recognises common target names and aliases from filenames and user hints
 - Displays solved field geometry and catalogue objects on the reference image
