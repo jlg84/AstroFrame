@@ -1,15 +1,18 @@
-Each panel should answer one question.
+# AstroFrame vision
 
-AstroFrame UI Principles
+> Each panel should answer one question.
 
-• Be calm.
-• Be concise.
-• State what is happening.
-• Never hide important work.
-• Never use technical jargon unless it belongs in the Solver Log.
-• The Solver Log explains how.
-• The status bar explains what.
-## Flexible Collection Import
+## UI principles
+
+- Be calm.
+- Be concise.
+- State what is happening.
+- Never hide important work.
+- Never use technical jargon unless it belongs in the Solver Log.
+- The Solver Log explains **how**.
+- The status bar explains **what**.
+
+## Flexible collection import
 
 **Design principle: AstroFrame adapts to the user's data; the user should not have to restructure data to suit AstroFrame.**
 
