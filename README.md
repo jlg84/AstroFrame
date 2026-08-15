@@ -1,6 +1,6 @@
 # AstroFrame
 
-AstroFrame is a macOS astrophotography framing and planning companion. Give it a reference image and it helps answer the practical question: **can I reproduce this framing with my own equipment, and what should I send to NINA?**
+AstroFrame is a macOS astrophotography framing and planning companion. Give it a reference image and it helps answer the practical question: **can I reproduce this framing with my own equipment, and what should I send to NINA or ASIAIR?**
 
 ## Current status
 
@@ -21,7 +21,7 @@ AstroFrame is now a packaged Python/Qt desktop application for macOS. The origin
 - Stores multiple telescope/camera rigs and compares their fields of view
 - Recommends a better-matching rig when the selected field is unsuitable
 - Supports reframing, rotation and mosaic planning
-- Exports framing information for use in NINA
+- Exports framing information for use in NINA and ASIAIR
 
 ## macOS development build
 
@@ -42,7 +42,7 @@ The script builds the macOS application from the supplied source. ASTAP is recom
 3. Choose an observing site and imaging rig.
 4. Inspect object markers, observability and equipment advice.
 5. Adjust framing/rotation or build a mosaic if needed.
-6. Export the result for NINA.
+6. Export the result for NINA or ASIAIR.
 
 ## Documentation
 
@@ -51,11 +51,12 @@ The script builds the macOS application from the supplied source. ASTAP is recom
 - [Equipment notes](docs/EQUIPMENT.md)
 - [Observing sites](docs/OBSERVING_SITES.md)
 - [Using AstroFrame with NINA](docs/USING_WITH_NINA.md)
+- [Using AstroFrame with ASIAIR](docs/USING_WITH_ASIAIR.md)
 - [Project vision](VISION.md)
 
 ## Development note
 
-AstroFrame is under active private development. RC22x is the current stabilisation baseline after extensive testing of plate solving, catalogue imports, coordinate precision, object-marker canonicalisation, observability, equipment framing, mosaics and NINA handoff.
+AstroFrame is under active private development. RC22x is the current stabilisation baseline after extensive testing of plate solving, catalogue imports, coordinate precision, object-marker canonicalisation, observability, equipment framing, mosaics and capture-software handoff.
 
 ## Repository owner
 
