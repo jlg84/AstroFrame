@@ -1,12 +1,12 @@
 # AstroFrame
 
-AstroFrame is a macOS astrophotography framing and planning companion. Give it a reference image and it helps answer the practical question: **can I reproduce this framing with my own equipment, and what should I send to NINA or ASIAIR?**
+AstroFrame is a cross-platform astrophotography framing and planning desktop application. Give it a reference image and it helps answer the practical question: **can I reproduce this framing with my own equipment, and what should I send to NINA or ASIAIR?**
 
 ## Current status
 
 **AstroFrame 1.0 — release-candidate development (current tested baseline: RC22x)**
 
-AstroFrame is now a packaged Python/Qt desktop application for macOS. The original browser prototype in this repository is historical and no longer represents the current application.
+AstroFrame is built with Python/Qt and is intended to remain platform-independent. The current packaged build and real-world testing are on macOS; Windows packaging and testing are planned as part of the 1.0 release work. The original browser prototype in this repository is historical and no longer represents the current application.
 
 ## What AstroFrame does
 
@@ -23,9 +23,9 @@ AstroFrame is now a packaged Python/Qt desktop application for macOS. The origin
 - Supports reframing, rotation and mosaic planning
 - Exports framing information for use in NINA and ASIAIR
 
-## macOS development build
+## Current macOS development build
 
-The release-candidate packages include a build script. After unpacking a package in `~/Downloads`:
+The current release-candidate packages include a macOS build script. After unpacking a package in `~/Downloads`:
 
 ```bash
 cd ~/Downloads/AstroFrame_1.0-RC22x
@@ -34,6 +34,8 @@ chmod +x build_mac_app.command
 ```
 
 The script builds the macOS application from the supplied source. ASTAP is recommended for local plate solving; Astrometry.net can be used as a fallback where configured.
+
+Windows build and installation instructions will be added once the Windows package has been built and tested.
 
 ## Core workflow
 
