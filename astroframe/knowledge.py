@@ -127,9 +127,9 @@ class KnowledgeStore:
         self.collections_root.mkdir(parents=True, exist_ok=True)
         self._targets: dict[str, TargetRecord] = {}
         self._load_targets()
-        # RC22u one-time coordinate-precision migration.  Older Imm imports
+        # RC22u one-time coordinate-precision migration. Older Imm imports
         # retained exact source strings but canonical targets used rounded
-        # workbook display columns.  Rebuild once with the corrected parser,
+        # workbook display columns. Rebuild once with the corrected parser,
         # then keep normal launches fast.
         migration = self.root / ".coord_precision_v2"
         if not migration.exists():
@@ -138,6 +138,23 @@ class KnowledgeStore:
                 migration.write_text("RC22u\n", encoding="utf-8")
             except OSError:
                 pass
+
+        # RC1 safety migration: a few legacy/flexible imports could persist
+        # compact sexagesimal values as if they were decimal degrees (for
+        # example M31 as RA 4244, Dec 411608). Do not require users to edit or
+        # delete their knowledge database; repair invalid sky positions from
+        # the best surviving collection source whenever such a record exists.
+        if any(not self._coordinates_valid(t.ra_deg, t.dec_deg) for t in self._targets.values()):
+            self.rebuild_canonical_coordinates(save=True)
+
+    @staticmethod
+    def _coordinates_valid(ra_deg: float | None, dec_deg: float | None) -> bool:
+        try:
+            ra = float(ra_deg)
+            dec = float(dec_deg)
+        except (TypeError, ValueError):
+            return False
+        return 0.0 <= ra < 360.0 and -90.0 <= dec <= 90.0
 
     def _load_targets(self) -> None:
         if not self.targets_path.exists():
@@ -165,14 +182,20 @@ class KnowledgeStore:
                 self._save_targets()
             return incoming
 
+        existing_coords_valid = self._coordinates_valid(existing.ra_deg, existing.dec_deg)
+        incoming_coords_valid = self._coordinates_valid(incoming.ra_deg, incoming.dec_deg)
+        use_incoming_coords = incoming_coords_valid and not existing_coords_valid
+
         # Facts can be enriched by later imports, but never replaced by blanks.
+        # Invalid legacy coordinates are the exception: a valid newly imported
+        # pair must replace them immediately rather than preserving corruption.
         merged = TargetRecord(
             id=existing.id,
             canonical_name=existing.canonical_name or incoming.canonical_name,
             common_name=existing.common_name or incoming.common_name,
             aliases=sorted(set(existing.aliases + incoming.aliases + ([incoming.common_name] if incoming.common_name else []))),
-            ra_deg=existing.ra_deg if existing.ra_deg is not None else incoming.ra_deg,
-            dec_deg=existing.dec_deg if existing.dec_deg is not None else incoming.dec_deg,
+            ra_deg=incoming.ra_deg if use_incoming_coords else existing.ra_deg,
+            dec_deg=incoming.dec_deg if use_incoming_coords else existing.dec_deg,
             angular_width_deg=existing.angular_width_deg if existing.angular_width_deg is not None else incoming.angular_width_deg,
             angular_height_deg=existing.angular_height_deg if existing.angular_height_deg is not None else incoming.angular_height_deg,
             apparent_size_text=existing.apparent_size_text or incoming.apparent_size_text,
@@ -215,6 +238,10 @@ class KnowledgeStore:
         path = self.collections_root / f"{collection.id}.json"
         payload = {"schema_version": 1, **asdict(collection)}
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
+        # The collection file now contains the source-coordinate evidence PACM
+        # needs. Re-evaluate canonical positions immediately so an import can
+        # repair a stale target without requiring an application restart.
+        self.rebuild_canonical_coordinates(save=True)
 
     def list_collections(self) -> list[CollectionRecord]:
         result: list[CollectionRecord] = []
@@ -226,6 +253,34 @@ class KnowledgeStore:
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
                 continue
         return result
+
+    @staticmethod
+    def _compact_sexagesimal(value: Any, *, ra: bool) -> float | None:
+        """Recover compact HHMMSS/DDMMSS values that Excel stored numerically."""
+        if value is None:
+            return None
+        text = str(value).strip().replace("−", "-").replace("–", "-")
+        try:
+            numeric = float(text)
+        except (TypeError, ValueError):
+            return None
+        if numeric != int(numeric):
+            return None
+        sign = -1.0 if numeric < 0 else 1.0
+        digits = str(abs(int(numeric)))
+        if len(digits) > 6:
+            return None
+        digits = digits.zfill(6)
+        a, b, c = int(digits[:2]), int(digits[2:4]), int(digits[4:6])
+        if b >= 60 or c >= 60:
+            return None
+        if ra:
+            if a >= 24:
+                return None
+            return (a + b / 60.0 + c / 3600.0) * 15.0
+        if a > 90 or (a == 90 and (b or c)):
+            return None
+        return sign * (a + b / 60.0 + c / 3600.0)
 
     @staticmethod
     def _source_coordinate_candidate(entry: CollectionEntry) -> tuple[float, float, int] | None:
@@ -242,7 +297,10 @@ class KnowledgeStore:
         # Newer imports may preserve normalised coordinates explicitly.
         try:
             if "_af_ra_deg" in fields and "_af_dec_deg" in fields:
-                return float(fields["_af_ra_deg"]), float(fields["_af_dec_deg"]), int(fields.get("_af_coord_precision", 50))
+                ra = float(fields["_af_ra_deg"])
+                dec = float(fields["_af_dec_deg"])
+                if KnowledgeStore._coordinates_valid(ra, dec):
+                    return ra, dec, int(fields.get("_af_coord_precision", 50))
         except (TypeError, ValueError):
             pass
         ra_val = fields.get("ra_source")
@@ -256,8 +314,17 @@ class KnowledgeStore:
                     dec_val = value
         if ra_val is None or dec_val is None:
             return None
-        ra = _ra_to_deg(ra_val); dec = _dec_to_deg(dec_val)
-        if ra is None or dec is None:
+        ra = _ra_to_deg(ra_val)
+        dec = _dec_to_deg(dec_val)
+        # Legacy spreadsheet cells sometimes lost leading zeroes because Excel
+        # stored compact sexagesimal coordinates as numbers. If the normal
+        # parser produces an impossible sky coordinate, reinterpret that source
+        # as zero-padded HHMMSS/DDMMSS rather than accepting thousands of degrees.
+        if ra is None or not (0.0 <= float(ra) < 360.0):
+            ra = KnowledgeStore._compact_sexagesimal(ra_val, ra=True)
+        if dec is None or not (-90.0 <= float(dec) <= 90.0):
+            dec = KnowledgeStore._compact_sexagesimal(dec_val, ra=False)
+        if not KnowledgeStore._coordinates_valid(ra, dec):
             return None
         text = f"{ra_val} {dec_val}"
         # Sexagesimal seconds are strongest; decimal detail is next.
@@ -286,6 +353,8 @@ class KnowledgeStore:
             if not candidates:
                 continue
             _source, ra, dec, _score = candidates[0]
+            if not self._coordinates_valid(ra, dec):
+                continue
             if target.ra_deg != ra or target.dec_deg != dec:
                 target.ra_deg, target.dec_deg = ra, dec
                 changed += 1
@@ -321,6 +390,7 @@ class KnowledgeStore:
                 if entry.target_id == target.id:
                     matches.append((collection, entry))
         return matches
+
     @staticmethod
     def _field_offsets_deg(centre_ra_deg: float, centre_dec_deg: float, ra_deg: float, dec_deg: float) -> tuple[float, float, float]:
         """Return local east/north offsets and great-circle separation in degrees."""
@@ -357,7 +427,7 @@ class KnowledgeStore:
         for collection in self.list_collections():
             for entry in collection.entries:
                 target = self.get_target(entry.target_id)
-                if target is None or target.ra_deg is None or target.dec_deg is None:
+                if target is None or not self._coordinates_valid(target.ra_deg, target.dec_deg):
                     continue
                 east, north, sep = self._field_offsets_deg(
                     centre_ra_deg, centre_dec_deg, target.ra_deg, target.dec_deg
@@ -375,12 +445,11 @@ class KnowledgeStore:
 
     def entries_near_position(self, ra_deg: float, dec_deg: float, radius_deg: float) -> list[tuple[TargetRecord, CollectionRecord, CollectionEntry, float]]:
         """Legacy circular proximity query retained for callers that need it."""
-        import math
         matches = []
         for collection in self.list_collections():
             for entry in collection.entries:
                 target = self.get_target(entry.target_id)
-                if target is None or target.ra_deg is None or target.dec_deg is None:
+                if target is None or not self._coordinates_valid(target.ra_deg, target.dec_deg):
                     continue
                 _east, _north, sep = self._field_offsets_deg(ra_deg, dec_deg, target.ra_deg, target.dec_deg)
                 allowance = radius_deg + 0.5 * max(target.angular_width_deg or 0.0, target.angular_height_deg or 0.0)
@@ -388,4 +457,3 @@ class KnowledgeStore:
                     matches.append((target, collection, entry, sep))
         matches.sort(key=lambda item: item[3])
         return matches
-
