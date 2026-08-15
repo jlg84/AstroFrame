@@ -3,6 +3,7 @@ import sys
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
+from .flexible_import_dialog import run_flexible_collection_import_dialog
 from .window import MainWindow
 
 
@@ -343,6 +344,11 @@ def run() -> int:
     palette.setColor(QPalette.ColorRole.WindowText, QColor("#EEF1F5"))
     app.setPalette(palette)
 
+    # RC1: keep the mature MainWindow intact while substituting the
+    # small-screen-safe mapper extracted for release-candidate testing.
+    MainWindow._flexible_collection_import_dialog = run_flexible_collection_import_dialog
+
     window = MainWindow()
+    window.setWindowTitle("AstroFrame 1.0 RC1")
     window.show()
     return app.exec()
