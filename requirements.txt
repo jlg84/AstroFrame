@@ -1,0 +1,6 @@
+PySide6>=6.7
+Pillow>=10
+requests>=2.31
+astropy>=6
+
+openpyxl>=3.1
