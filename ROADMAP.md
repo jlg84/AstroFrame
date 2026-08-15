@@ -4,7 +4,7 @@ AstroFrame has moved well beyond the original 0.1 browser prototype. This roadma
 
 ## Implemented in the 1.0 RC series
 
-- [x] Native macOS desktop application
+- [x] Desktop application built with Python/Qt
 - [x] Local reference-image loading
 - [x] ASTAP plate solving
 - [x] Astrometry.net fallback
@@ -21,16 +21,18 @@ AstroFrame has moved well beyond the original 0.1 browser prototype. This roadma
 - [x] Clickable in-frame object markers
 - [x] Reframing controls
 - [x] Mosaic planning, including automatic mosaics
-- [x] NINA export/handoff
+- [x] NINA and ASIAIR export/handoff
 - [x] Progress/status feedback for longer operations
 
 ## 1.0 release work
 
 - [ ] Continue normal-use regression testing of the RC22x baseline
+- [ ] Build and test a Windows package
+- [ ] Add Windows installation/build documentation
 - [ ] Refresh public-facing documentation and screenshots
 - [ ] Consolidate historical RC notes into a readable release history
 - [ ] Add repeatable smoke/regression tests for solved-image geometry and catalogue-marker placement
-- [ ] Prepare a clean 1.0 release package
+- [ ] Prepare clean 1.0 release packages
 
 ## After 1.0
 
@@ -39,5 +41,6 @@ AstroFrame has moved well beyond the original 0.1 browser prototype. This roadma
 - [ ] Refine multi-rig visual differentiation and legend behaviour
 - [ ] Explore additional capture-software handoffs where useful
 - [ ] Continue performance work on large catalogue collections
+- [ ] Evaluate Linux packaging once macOS and Windows builds are established
 
 The guiding product question remains: **Given a reference image, can I shoot this with my equipment from my site—and if not, what is the best practical alternative?**
