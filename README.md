@@ -4,9 +4,11 @@ AstroFrame is a cross-platform astrophotography framing and planning desktop app
 
 ## Current status
 
-**AstroFrame 1.0 — release-candidate development (current tested baseline: RC22x)**
+**AstroFrame 1.0 RC1 — private release-candidate testing**
 
-AstroFrame is built with Python/Qt and is intended to remain platform-independent. The current packaged build and real-world testing are on macOS; Windows packaging and testing are planned as part of the 1.0 release work. The original browser prototype in this repository is historical and no longer represents the current application.
+AstroFrame is built with Python/Qt and is intended to remain platform-independent. The macOS application has passed the RC1 smoke test from a clean GitHub build. The current release work is focused on installation/distribution testing with a small group of outside testers before wider release. Windows packaging and testing remain part of the 1.0 release work.
+
+The original browser prototype in this repository is historical and no longer represents the current application.
 
 ## What AstroFrame does
 
@@ -23,17 +25,25 @@ AstroFrame is built with Python/Qt and is intended to remain platform-independen
 - Supports reframing, rotation and mosaic planning
 - Exports framing information for use in NINA and ASIAIR
 
-## Current macOS development build
+## macOS RC1 build and package
 
-The current release-candidate packages include a macOS build script. After unpacking a package in `~/Downloads`:
+Build the application from source with:
 
 ```bash
-cd ~/Downloads/AstroFrame_1.0-RC22x
 chmod +x build_mac_app.command
 ./build_mac_app.command
 ```
 
-The script builds the macOS application from the supplied source. ASTAP is recommended for local plate solving; Astrometry.net can be used as a fallback where configured.
+After the resulting `dist/AstroFrame.app` has passed its smoke test, create the private-test disk image with:
+
+```bash
+chmod +x package_mac_release.command
+./package_mac_release.command
+```
+
+The packaging script creates a versioned macOS DMG and SHA-256 checksum under `release/`. It does not Developer ID sign or notarize the private RC1 package.
+
+See [macOS installation](docs/MAC_INSTALL.md) and the [RC1 tester guide](docs/RC1_TESTER_GUIDE.md).
 
 Windows build and installation instructions will be added once the Windows package has been built and tested.
 
@@ -54,11 +64,13 @@ Windows build and installation instructions will be added once the Windows packa
 - [Observing sites](docs/OBSERVING_SITES.md)
 - [Using AstroFrame with NINA](docs/USING_WITH_NINA.md)
 - [Using AstroFrame with ASIAIR](docs/USING_WITH_ASIAIR.md)
+- [macOS installation](docs/MAC_INSTALL.md)
+- [RC1 tester guide](docs/RC1_TESTER_GUIDE.md)
 - [Project vision](VISION.md)
 
 ## Development note
 
-AstroFrame is under active private development. RC22x is the current stabilisation baseline after extensive testing of plate solving, catalogue imports, coordinate precision, object-marker canonicalisation, observability, equipment framing, mosaics and capture-software handoff.
+AstroFrame 1.0 RC1 is feature-frozen while installation and first-use behaviour are tested outside the development machines. Release-blocking bugs discovered during this phase may still be fixed; new feature ideas are deferred beyond RC1 unless they prevent normal use.
 
 ## Repository owner
 
