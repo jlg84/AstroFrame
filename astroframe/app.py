@@ -4,6 +4,7 @@ from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import QApplication
 
 from .flexible_import_dialog import run_flexible_collection_import_dialog
+from .rc1_onboarding import install_rc1_onboarding_fixes
 from .window import MainWindow
 
 
@@ -347,6 +348,7 @@ def run() -> int:
     # RC1: keep the mature MainWindow intact while substituting the
     # small-screen-safe mapper extracted for release-candidate testing.
     MainWindow._flexible_collection_import_dialog = run_flexible_collection_import_dialog
+    install_rc1_onboarding_fixes(MainWindow)
 
     window = MainWindow()
     window.setWindowTitle("AstroFrame 1.0 RC1")
