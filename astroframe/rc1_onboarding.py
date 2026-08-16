@@ -1,16 +1,22 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QComboBox
+from PySide6.QtWidgets import (
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QVBoxLayout,
+)
+
+from .observer import ObserverProfile
 
 
 def install_rc1_onboarding_fixes(MainWindow) -> None:
-    """Apply small, release-candidate-only onboarding fixes.
-
-    Keeps the mature MainWindow implementation intact while fixing two
-    first-run problems discovered during the clean-install DMG test:
-    observing-site setup being hidden by personalisation choices, and editable
-    equipment combos looking selected while retaining only the typed prefix.
-    """
+    """Apply the small onboarding fixes discovered during the RC1 clean-install test."""
 
     original_apply_personalised_flow = MainWindow._apply_personalised_flow
     original_first_launch = MainWindow._prompt_for_personalisation_on_first_launch
@@ -18,36 +24,112 @@ def install_rc1_onboarding_fixes(MainWindow) -> None:
 
     def apply_personalised_flow(self) -> None:
         original_apply_personalised_flow(self)
-        # Location is core application state, not an optional personalised
-        # feature. It must always remain discoverable and editable.
         if hasattr(self, "observing_site_section"):
             self.observing_site_section.setVisible(True)
 
-    def first_launch(self) -> None:
-        had_completed_setup = bool(
-            self.settings.value("personal/setupComplete", False, bool)
-        )
-        original_first_launch(self)
+    def quick_first_run_site(self) -> bool:
+        """Ask only for information a new user actually needs to understand."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Set up your observing site")
+        dialog.setModal(True)
+        layout = QVBoxLayout(dialog)
 
+        help_text = QLabel(
+            "Tell AstroFrame where you normally observe. It uses the location to "
+            "calculate target visibility. Your Mac's time zone will be used automatically. "
+            "You can change the site or advanced details later under Observing Site."
+        )
+        help_text.setWordWrap(True)
+        help_text.setObjectName("helpText")
+        layout.addWidget(help_text)
+
+        form = QFormLayout()
+        site_name = QLineEdit("Home")
+        location_name = QLineEdit()
+        location_name.setPlaceholderText("e.g. Oamaru, New Zealand")
+        form.addRow("Site name", site_name)
+        form.addRow("Town / city", location_name)
+        layout.addLayout(form)
+
+        found = {"lat": None, "lon": None, "display": ""}
+        status = QLabel("")
+        status.setWordWrap(True)
+        status.setObjectName("helpText")
+
+        def find_location() -> None:
+            result = self._geocode_location(location_name.text())
+            if result is None:
+                QMessageBox.information(
+                    dialog,
+                    "Location not found",
+                    "AstroFrame could not look up that location. Try a town/city and country. "
+                    "You can also enter coordinates later under Observing Site.",
+                )
+                return
+            lat, lon, display = result
+            found["lat"], found["lon"], found["display"] = lat, lon, display
+            location_name.setText(display)
+            status.setText(
+                f"Found {lat:+.4f}°, {lon:+.4f}°. Time zone: this Mac (automatic)."
+            )
+
+        find_button = QPushButton("Find location")
+        find_button.clicked.connect(find_location)
+        layout.addWidget(find_button)
+        layout.addWidget(status)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Cancel | QDialogButtonBox.StandardButton.Save
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Save).setText("Save observing site")
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addWidget(buttons)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return False
+        if not location_name.text().strip():
+            return False
+
+        # If Save follows a successful lookup, use those coordinates. If the user
+        # edited the text afterwards, try one final lookup before falling back.
+        if found["lat"] is None or location_name.text().strip() != found["display"]:
+            result = self._geocode_location(location_name.text())
+            if result is None:
+                QMessageBox.warning(
+                    self,
+                    "Observing site",
+                    "Please use Find location first, or configure coordinates later under Observing Site.",
+                )
+                return False
+            found["lat"], found["lon"], found["display"] = result
+            location_name.setText(found["display"])
+
+        self.observer_profile = ObserverProfile(
+            profile_name=site_name.text().strip() or "Home",
+            location_name=location_name.text().strip(),
+            latitude_deg=float(found["lat"]),
+            longitude_deg=float(found["lon"]),
+            elevation_m=0.0,
+            timezone_name="",  # blank deliberately means the computer's local zone
+            bortle_class=0,     # optional metadata; do not burden first-run setup
+            minimum_altitude_deg=30.0,
+        )
+        self._save_observer_profile(self.observer_profile)
+        self._refresh_observer_summary()
+        return True
+
+    def first_launch(self) -> None:
+        had_completed_setup = bool(self.settings.value("personal/setupComplete", False, bool))
+        original_first_launch(self)
         if had_completed_setup:
             return
-
-        # Only continue to location setup when the Welcome dialog was actually
-        # completed. Cancelling Welcome should not force a second modal dialog.
-        completed_setup = bool(
-            self.settings.value("personal/setupComplete", False, bool)
-        )
+        completed_setup = bool(self.settings.value("personal/setupComplete", False, bool))
         if not completed_setup:
             return
-
-        # A brand-new user should be asked where they observe immediately.
-        # Existing/migrated users with a stored location are left alone.
-        location_name = str(
-            self.settings.value("observer/locationName", "") or ""
-        ).strip()
+        location_name = str(self.settings.value("observer/locationName", "") or "").strip()
         if not location_name:
-            self.edit_observer_profile()
-
+            quick_first_run_site(self)
         if hasattr(self, "observing_site_section"):
             self.observing_site_section.setVisible(True)
 
@@ -62,22 +144,15 @@ def install_rc1_onboarding_fixes(MainWindow) -> None:
             typed = edit.text().strip()
             if not typed:
                 return
-
-            # If the completer has a highlighted completion, Enter should
-            # commit exactly what the user can already see in the popup.
             completion = combo.completer().currentCompletion().strip()
             if completion and completion in candidates:
                 combo.setCurrentText(completion)
                 return
-
             folded = typed.casefold()
             exact = [name for name in candidates if name.casefold() == folded]
             if len(exact) == 1:
                 combo.setCurrentText(exact[0])
                 return
-
-            # Clicking Save after typing a unique prefix should also commit the
-            # only valid choice rather than failing validation on the prefix.
             matches = [name for name in candidates if name.casefold().startswith(folded)]
             if len(matches) == 1:
                 combo.setCurrentText(matches[0])
@@ -86,13 +161,11 @@ def install_rc1_onboarding_fixes(MainWindow) -> None:
         if edit is not None:
             edit.returnPressed.connect(commit_best_match)
             edit.editingFinished.connect(commit_best_match)
-
         completer = combo.completer()
         try:
             completer.activated[str].connect(combo.setCurrentText)
         except (AttributeError, TypeError):
             pass
-
         return combo
 
     MainWindow._apply_personalised_flow = apply_personalised_flow
