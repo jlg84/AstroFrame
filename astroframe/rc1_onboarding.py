@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -12,15 +14,43 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from . import collection_import as _collection_import
 from .observer import ObserverProfile
 
 
 def install_rc1_onboarding_fixes(MainWindow) -> None:
-    """Apply the small onboarding fixes discovered during the RC1 clean-install test."""
+    """Apply the small onboarding/import fixes discovered during RC1 testing."""
 
     original_apply_personalised_flow = MainWindow._apply_personalised_flow
     original_first_launch = MainWindow._prompt_for_personalisation_on_first_launch
     original_searchable_combo = MainWindow._searchable_combo
+
+    # Real-world astronomy lists commonly write right ascension as, for example,
+    # ``05h 38.7 m`` or ``05h 38m 42s``.  The mature importer already supports
+    # colon-separated and compact sexagesimal forms; add this conventional form
+    # without changing the behaviour of any formats it already understands.
+    original_ra_to_deg = _collection_import._ra_to_deg
+
+    def ra_to_deg_with_units(value):
+        if isinstance(value, str):
+            text = value.strip().replace("−", "-").replace("–", "-")
+            match = re.fullmatch(
+                r"(\d{1,2})\s*[hH]\s*"
+                r"(\d+(?:\.\d+)?)\s*[mM]"
+                r"(?:\s*(\d+(?:\.\d+)?)\s*[sS])?\s*",
+                text,
+            )
+            if match:
+                hours = float(match.group(1))
+                minutes = float(match.group(2))
+                seconds = float(match.group(3) or 0.0)
+                if 0.0 <= hours <= 24.0 and 0.0 <= minutes < 60.0 and 0.0 <= seconds < 60.0:
+                    total_hours = hours + minutes / 60.0 + seconds / 3600.0
+                    if total_hours <= 24.0:
+                        return total_hours * 15.0
+        return original_ra_to_deg(value)
+
+    _collection_import._ra_to_deg = ra_to_deg_with_units
 
     def apply_personalised_flow(self) -> None:
         original_apply_personalised_flow(self)
