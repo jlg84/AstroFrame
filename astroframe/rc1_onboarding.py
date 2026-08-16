@@ -18,6 +18,7 @@ from PySide6.QtWidgets import (
 
 from . import collection_import as _collection_import
 from .observer import ObserverProfile
+from .rc1_astap_fix import install_rc1_astap_reference_pixel_fix
 
 
 class _MessageBoxMnemonicFilter(QObject):
@@ -46,6 +47,8 @@ class _MessageBoxMnemonicFilter(QObject):
 
 def install_rc1_onboarding_fixes(MainWindow) -> None:
     """Apply the small onboarding/import fixes discovered during RC1 testing."""
+
+    install_rc1_astap_reference_pixel_fix()
 
     original_apply_personalised_flow = MainWindow._apply_personalised_flow
     original_first_launch = MainWindow._prompt_for_personalisation_on_first_launch
