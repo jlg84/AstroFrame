@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import re
 
+from PySide6.QtCore import QEvent, QObject, Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -18,12 +20,45 @@ from . import collection_import as _collection_import
 from .observer import ObserverProfile
 
 
+class _MessageBoxMnemonicFilter(QObject):
+    """Make visible Yes/No mnemonics work as plain keys in modal questions."""
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() != QEvent.Type.KeyPress:
+            return False
+        box = QApplication.activeModalWidget()
+        if not isinstance(box, QMessageBox):
+            return False
+        key = event.key()
+        standard = None
+        if key == Qt.Key.Key_Y:
+            standard = QMessageBox.StandardButton.Yes
+        elif key == Qt.Key.Key_N:
+            standard = QMessageBox.StandardButton.No
+        if standard is None:
+            return False
+        button = box.button(standard)
+        if button is None or not button.isEnabled():
+            return False
+        button.click()
+        return True
+
+
 def install_rc1_onboarding_fixes(MainWindow) -> None:
     """Apply the small onboarding/import fixes discovered during RC1 testing."""
 
     original_apply_personalised_flow = MainWindow._apply_personalised_flow
     original_first_launch = MainWindow._prompt_for_personalisation_on_first_launch
     original_searchable_combo = MainWindow._searchable_combo
+
+    # The underlined Y/N labels on QMessageBox buttons promise keyboard
+    # accelerators. On macOS Qt does not reliably activate those mnemonics, so
+    # honour the promise explicitly while a modal Yes/No question has focus.
+    app = QApplication.instance()
+    if app is not None and not hasattr(app, "_astroframe_messagebox_mnemonic_filter"):
+        mnemonic_filter = _MessageBoxMnemonicFilter(app)
+        app.installEventFilter(mnemonic_filter)
+        app._astroframe_messagebox_mnemonic_filter = mnemonic_filter
 
     # Real-world astronomy lists commonly write right ascension as, for example,
     # ``05h 38.7 m`` or ``05h 38m 42s``.  The mature importer already supports
@@ -142,8 +177,6 @@ def install_rc1_onboarding_fixes(MainWindow) -> None:
         if not location_name.text().strip():
             return False
 
-        # If Save follows a successful lookup, use those coordinates. If the user
-        # edited the text afterwards, try one final lookup before falling back.
         if found["lat"] is None or location_name.text().strip() != found["display"]:
             result = self._geocode_location(location_name.text())
             if result is None:
@@ -162,8 +195,8 @@ def install_rc1_onboarding_fixes(MainWindow) -> None:
             latitude_deg=float(found["lat"]),
             longitude_deg=float(found["lon"]),
             elevation_m=0.0,
-            timezone_name="",  # blank deliberately means the computer's local zone
-            bortle_class=0,     # optional metadata; do not burden first-run setup
+            timezone_name="",
+            bortle_class=0,
             minimum_altitude_deg=30.0,
         )
         self._save_observer_profile(self.observer_profile)
