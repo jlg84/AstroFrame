@@ -50,6 +50,35 @@ def install_rc1_onboarding_fixes(MainWindow) -> None:
     original_apply_personalised_flow = MainWindow._apply_personalised_flow
     original_first_launch = MainWindow._prompt_for_personalisation_on_first_launch
     original_searchable_combo = MainWindow._searchable_combo
+    original_apply_solution = MainWindow._apply_solution
+
+    # A confirmed solver clue is resolved to a precise sky coordinate before ASTAP
+    # runs. The main window previously cached only the clue's display name, throwing
+    # that precision away. Catalogue markers could then fall back to a rounded
+    # imported coordinate (M104 exposed this clearly). Preserve the independently
+    # resolved clue coordinate in the image metadata; _target_pixel_position already
+    # knows to prefer it for the matching catalogue identity. This changes no WCS,
+    # framing, mosaic, or export geometry.
+    def apply_solution_preserving_hint_coordinate(self, solution, *, cached: bool) -> None:
+        original_apply_solution(self, solution, cached=cached)
+        if (
+            not self.current_image_path
+            or not self.solving_hint_name
+            or self.solving_hint_ra_hours is None
+            or self.solving_hint_dec_deg is None
+        ):
+            return
+        target_info = self._cached_target_for_current_image() or {}
+        target_info.update(
+            name=str(self.solving_hint_name),
+            identification_source="user_hint",
+            identification_version=self.SUBJECT_IDENTIFICATION_VERSION,
+            subject_ra_deg=float(self.solving_hint_ra_hours) * 15.0,
+            subject_dec_deg=float(self.solving_hint_dec_deg),
+        )
+        self.solve_cache.update_metadata(self.current_image_path, target=target_info)
+
+    MainWindow._apply_solution = apply_solution_preserving_hint_coordinate
 
     # The underlined Y/N labels on QMessageBox buttons promise keyboard
     # accelerators. On macOS Qt does not reliably activate those mnemonics, so
