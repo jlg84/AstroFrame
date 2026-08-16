@@ -2,9 +2,9 @@
 
 This changelog records major public-development milestones. The many intermediate release-candidate builds were iterative development snapshots rather than separate public releases.
 
-## 1.0-RC22x — 2026-08
+## 1.0.0 — 2026-08-17
 
-Current release-candidate baseline.
+First public desktop release.
 
 ### Major capabilities
 
@@ -19,7 +19,14 @@ Current release-candidate baseline.
 - Interactive reframing and automatic mosaic planning
 - NINA and ASIAIR framing handoff
 - Regression tests for key solving, knowledge and observing behaviour
-- Packaged macOS development build; cross-platform application direction with Windows packaging/testing planned
+- Packaged macOS application
+
+### RC1 acceptance fixes
+
+- Preserve precise resolved coordinates from confirmed solver clues so catalogue markers do not fall back to coarser imported coordinates.
+- Redirect macOS two-finger/wheel scrolling over Mosaic controls to the left sidebar, preventing accidental Mosaic changes while scrolling.
+- Make visible Yes/No keyboard mnemonics respond to plain Y/N keys on macOS.
+- Retain the flexible catalogue-import and first-run/onboarding fixes validated during RC1 testing.
 
 ## 0.1.0 — 2026-08-04
 
