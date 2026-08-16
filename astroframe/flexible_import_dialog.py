@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import collection_import as _collection_import
 from .collection_import import (
     FLEXIBLE_FIELDS,
     _read_flexible_table,
@@ -27,7 +28,6 @@ from .collection_import import (
     discover_flexible_source,
     flexible_preview_rows,
     import_flexible_collection,
-    infer_flexible_mapping,
 )
 
 
@@ -174,7 +174,11 @@ def run_flexible_collection_import_dialog(self, path: str):
         rebuilding["value"] = True
         tbl = current_table["value"]
         headers = tbl["headers"]
-        inferred = infer_flexible_mapping(headers)
+        # Resolve inference through the module at call time. RC1 startup patches
+        # the generic inference rules for newly discovered real-world catalogue
+        # edge cases; importing the function by value here would retain a stale
+        # pre-patch reference for the lifetime of this module.
+        inferred = _collection_import.infer_flexible_mapping(headers)
         for key, combo in mapping_boxes.items():
             previous_header = combo.currentData() if preserve else None
             combo.blockSignals(True)
