@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
 
 from . import collection_import as _collection_import
 from .observer import ObserverProfile
-from .rc1_astap_fix import install_rc1_astap_reference_pixel_fix
 
 
 class _MessageBoxMnemonicFilter(QObject):
@@ -48,11 +47,35 @@ class _MessageBoxMnemonicFilter(QObject):
 def install_rc1_onboarding_fixes(MainWindow) -> None:
     """Apply the small onboarding/import fixes discovered during RC1 testing."""
 
-    install_rc1_astap_reference_pixel_fix()
-
     original_apply_personalised_flow = MainWindow._apply_personalised_flow
     original_first_launch = MainWindow._prompt_for_personalisation_on_first_launch
     original_searchable_combo = MainWindow._searchable_combo
+    original_target_pixel_position = MainWindow._target_pixel_position
+    original_reference_pixel_position = MainWindow._reference_pixel_position
+
+    # RC1 marker regression: the catalogue layer reaching the Qt scene is in
+    # FITS-style bottom-origin pixel Y, whereas QPixmap/QGraphicsScene uses a
+    # top-origin Y axis.  M104 made this visible because its target is far from
+    # the image's horizontal midline.  Reflect only catalogue/target marker
+    # display coordinates here; the plate solution and framing/export geometry
+    # remain untouched.
+    def _top_origin_position(self, original, value):
+        pos = original(self, value)
+        if pos is None:
+            return None
+        _width_px, height_px = self.current_image_size
+        if height_px <= 0:
+            return pos
+        return float(pos[0]), (height_px - 1) - float(pos[1])
+
+    def target_pixel_position_top_origin(self, target):
+        return _top_origin_position(self, original_target_pixel_position, target)
+
+    def reference_pixel_position_top_origin(self, obj):
+        return _top_origin_position(self, original_reference_pixel_position, obj)
+
+    MainWindow._target_pixel_position = target_pixel_position_top_origin
+    MainWindow._reference_pixel_position = reference_pixel_position_top_origin
 
     # The underlined Y/N labels on QMessageBox buttons promise keyboard
     # accelerators. On macOS Qt does not reliably activate those mnemonics, so
