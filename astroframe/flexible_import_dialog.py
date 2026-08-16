@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from PySide6.QtCore import QEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QDialogButtonBox,
@@ -18,6 +20,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from . import collection_import as _collection_import
 from .collection_import import (
     FLEXIBLE_FIELDS,
     _read_flexible_table,
@@ -25,8 +28,23 @@ from .collection_import import (
     discover_flexible_source,
     flexible_preview_rows,
     import_flexible_collection,
-    infer_flexible_mapping,
 )
+
+
+class _WheelSafeComboBox(QComboBox):
+    """Combo box that cannot be changed accidentally by trackpad scrolling.
+
+    Wheel events are ignored unless the popup is open, allowing the surrounding
+    QScrollArea to continue scrolling naturally when the pointer crosses a
+    mapping selector.
+    """
+
+    def wheelEvent(self, event) -> None:
+        view = self.view()
+        if view is not None and view.isVisible():
+            super().wheelEvent(event)
+            return
+        event.ignore()
 
 
 def run_flexible_collection_import_dialog(self, path: str):
@@ -66,7 +84,7 @@ def run_flexible_collection_import_dialog(self, path: str):
     layout.addWidget(intro)
 
     source_form = QFormLayout()
-    sheet_combo = QComboBox()
+    sheet_combo = _WheelSafeComboBox()
     sheet_combo.addItems(table.get("sheet_names") or [table["sheet"]])
     sheet_combo.setCurrentText(table["sheet"])
     source_form.addRow("Worksheet", sheet_combo)
@@ -78,7 +96,7 @@ def run_flexible_collection_import_dialog(self, path: str):
     source_form.addRow("Collection name", collection_name)
     author_edit = QLineEdit()
     source_form.addRow("Author (optional)", author_edit)
-    size_units = QComboBox()
+    size_units = _WheelSafeComboBox()
     size_units.addItem("Arcminutes (common for DSO catalogues)", "arcmin")
     size_units.addItem("Degrees", "degrees")
     size_units.addItem("Arcseconds", "arcsec")
@@ -91,7 +109,7 @@ def run_flexible_collection_import_dialog(self, path: str):
     mapping_form = QFormLayout()
     mapping_boxes: dict[str, QComboBox] = {}
     for key, label, required in FLEXIBLE_FIELDS:
-        combo = QComboBox()
+        combo = _WheelSafeComboBox()
         mapping_boxes[key] = combo
         mapping_form.addRow(label + (" *" if required else ""), combo)
     layout.addLayout(mapping_form)
@@ -156,7 +174,11 @@ def run_flexible_collection_import_dialog(self, path: str):
         rebuilding["value"] = True
         tbl = current_table["value"]
         headers = tbl["headers"]
-        inferred = infer_flexible_mapping(headers)
+        # Resolve inference through the module at call time. RC1 startup patches
+        # the generic inference rules for newly discovered real-world catalogue
+        # edge cases; importing the function by value here would retain a stale
+        # pre-patch reference for the lifetime of this module.
+        inferred = _collection_import.infer_flexible_mapping(headers)
         for key, combo in mapping_boxes.items():
             previous_header = combo.currentData() if preserve else None
             combo.blockSignals(True)
