@@ -52,6 +52,27 @@ def install_rc1_onboarding_fixes(MainWindow) -> None:
 
     _collection_import._ra_to_deg = ra_to_deg_with_units
 
+    # Do not map one physical column to both a complete coordinate and one of
+    # its component fields.  A header named simply "DEC" is a complete single-
+    # column declination, not also a "Dec sign" column; likewise for RA.
+    original_infer_mapping = _collection_import.infer_flexible_mapping
+
+    def infer_mapping_without_coordinate_duplicates(headers):
+        mapping = original_infer_mapping(headers)
+        if mapping.get("ra") is not None:
+            ra_index = mapping["ra"]
+            for key in ("ra_h", "ra_m", "ra_s"):
+                if mapping.get(key) == ra_index:
+                    mapping[key] = None
+        if mapping.get("dec") is not None:
+            dec_index = mapping["dec"]
+            for key in ("dec_sign", "dec_d", "dec_m", "dec_s"):
+                if mapping.get(key) == dec_index:
+                    mapping[key] = None
+        return mapping
+
+    _collection_import.infer_flexible_mapping = infer_mapping_without_coordinate_duplicates
+
     def apply_personalised_flow(self) -> None:
         original_apply_personalised_flow(self)
         if hasattr(self, "observing_site_section"):
