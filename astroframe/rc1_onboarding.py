@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
 )
 
@@ -44,13 +45,61 @@ class _MessageBoxMnemonicFilter(QObject):
         return True
 
 
+class _SidebarWheelRedirect(QObject):
+    """Route trackpad/wheel scrolling over mosaic controls to the sidebar."""
+
+    def __init__(self, scroll_area: QScrollArea, parent=None) -> None:
+        super().__init__(parent)
+        self.scroll_area = scroll_area
+
+    def eventFilter(self, watched, event) -> bool:
+        if event.type() != QEvent.Type.Wheel:
+            return False
+
+        bar = self.scroll_area.verticalScrollBar()
+        pixel_delta = event.pixelDelta().y()
+        if pixel_delta:
+            delta = float(pixel_delta)
+        else:
+            angle_delta = event.angleDelta().y()
+            if not angle_delta:
+                return False
+            delta = (float(angle_delta) / 120.0) * max(1, bar.singleStep()) * 3.0
+
+        bar.setValue(round(bar.value() - delta))
+        event.accept()
+        return True
+
+
 def install_rc1_onboarding_fixes(MainWindow) -> None:
     """Apply the small onboarding/import fixes discovered during RC1 testing."""
 
+    original_init = MainWindow.__init__
     original_apply_personalised_flow = MainWindow._apply_personalised_flow
     original_first_launch = MainWindow._prompt_for_personalisation_on_first_launch
     original_searchable_combo = MainWindow._searchable_combo
     original_apply_solution = MainWindow._apply_solution
+
+    # The mosaic grid combo and overlap spin box sit inside the main sidebar.
+    # On a Mac trackpad they otherwise consume two-finger wheel events and can
+    # change their own value while the user is simply trying to move down the
+    # sidebar.  Treat wheel/trackpad motion over those controls as sidebar
+    # scrolling; deliberate clicks/keyboard edits still operate the controls.
+    def init_with_sidebar_wheel_guard(self) -> None:
+        original_init(self)
+        sidebar_scroll = self.findChild(QScrollArea, "sidebarScroll")
+        controls = [
+            getattr(self, "mosaic_grid_combo", None),
+            getattr(self, "mosaic_overlap_spin", None),
+        ]
+        if sidebar_scroll is not None:
+            wheel_redirect = _SidebarWheelRedirect(sidebar_scroll, self)
+            for control in controls:
+                if control is not None:
+                    control.installEventFilter(wheel_redirect)
+            self._astroframe_sidebar_wheel_redirect = wheel_redirect
+
+    MainWindow.__init__ = init_with_sidebar_wheel_guard
 
     # A confirmed solver clue is resolved to a precise sky coordinate before ASTAP
     # runs. The main window previously cached only the clue's display name, throwing
