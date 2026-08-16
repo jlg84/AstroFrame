@@ -53,12 +53,11 @@ def install_rc1_onboarding_fixes(MainWindow) -> None:
     original_target_pixel_position = MainWindow._target_pixel_position
     original_reference_pixel_position = MainWindow._reference_pixel_position
 
-    # RC1 marker regression: the catalogue layer reaching the Qt scene is in
-    # FITS-style bottom-origin pixel Y, whereas QPixmap/QGraphicsScene uses a
-    # top-origin Y axis.  M104 made this visible because its target is far from
-    # the image's horizontal midline.  Reflect only catalogue/target marker
-    # display coordinates here; the plate solution and framing/export geometry
-    # remain untouched.
+    # RC1 marker regression: in the built app the catalogue layer reaches the
+    # QGraphicsScene in bottom-origin pixel Y, while QPixmap uses top-origin Y.
+    # M104 exposes the mismatch because the galaxy is well away from the image
+    # midline.  Reflect only marker-display coordinates here; plate solving,
+    # framing, mosaics and exported celestial coordinates are left untouched.
     def _top_origin_position(self, original, value):
         pos = original(self, value)
         if pos is None:
