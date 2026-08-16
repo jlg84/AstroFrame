@@ -345,12 +345,12 @@ def run() -> int:
     palette.setColor(QPalette.ColorRole.WindowText, QColor("#EEF1F5"))
     app.setPalette(palette)
 
-    # RC1: keep the mature MainWindow intact while substituting the
-    # small-screen-safe mapper extracted for release-candidate testing.
+    # Keep the mature MainWindow intact while applying the release fixes
+    # validated during RC1 acceptance testing.
     MainWindow._flexible_collection_import_dialog = run_flexible_collection_import_dialog
     install_rc1_onboarding_fixes(MainWindow)
 
     window = MainWindow()
-    window.setWindowTitle("AstroFrame 1.0 RC1")
+    window.setWindowTitle("AstroFrame 1.0.0")
     window.show()
     return app.exec()
