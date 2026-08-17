@@ -30,7 +30,7 @@ app = BUNDLE(
     info_plist={
         'CFBundleName': 'AstroFrame',
         'CFBundleDisplayName': 'AstroFrame',
-        'CFBundleShortVersionString': '1.0 RC1',
+        'CFBundleShortVersionString': '1.0.0',
         'CFBundleVersion': '1',
         'NSHighResolutionCapable': True,
     },

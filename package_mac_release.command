@@ -17,9 +17,9 @@ if [[ ! -d "$APP" ]]; then
 fi
 
 BUNDLE_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || true)"
-if [[ "$BUNDLE_VERSION" != "1.0 RC1" ]]; then
+if [[ "$BUNDLE_VERSION" != "$VERSION" ]]; then
   echo "Unexpected app bundle version: ${BUNDLE_VERSION:-unknown}"
-  echo "Expected: 1.0 RC1"
+  echo "Expected: $VERSION"
   exit 1
 fi
 
@@ -30,12 +30,11 @@ mkdir -p "$STAGE_DIR" "$RELEASE_DIR"
 ditto "$APP" "$STAGE_DIR/AstroFrame.app"
 ln -s /Applications "$STAGE_DIR/Applications"
 cp docs/MAC_INSTALL.md "$STAGE_DIR/READ ME FIRST.md"
-cp docs/RC1_TESTER_GUIDE.md "$STAGE_DIR/RC1 TESTER GUIDE.md"
 
 rm -f "$DMG" "$CHECKSUM"
 
 hdiutil create \
-  -volname "AstroFrame 1.0 RC1" \
+  -volname "AstroFrame $VERSION" \
   -srcfolder "$STAGE_DIR" \
   -ov \
   -format UDZO \
@@ -57,5 +56,5 @@ echo "Gatekeeper assessment:"
 spctl -a -vv "$APP" || true
 
 echo
-echo "Important: this script creates the private-test DMG but does not"
-echo "Developer ID sign or notarize it. See docs/MAC_INSTALL.md."
+echo "Important: this package is not Developer ID signed or notarized."
+echo "See docs/MAC_INSTALL.md for first-launch instructions."
