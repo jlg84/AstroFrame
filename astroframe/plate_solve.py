@@ -1249,6 +1249,87 @@ class AstrometryNetClient:
             "image may not be public."
         )
 
+    def _solution_from_wcs_job(
+        self,
+        job_id: int,
+        *,
+        image_width_px: int,
+        image_height_px: int,
+        solve_mode: str,
+        solve_seconds: float | None = None,
+    ) -> PlateSolution:
+        """Build a PlateSolution from Astrometry.net's actual WCS product."""
+        url = f"{NOVA_ROOT}/wcs_file/{int(job_id)}"
+        self._say(f"Astrometry.net: downloading WCS for job #{int(job_id)}.")
+
+        response = self.http.get(url, timeout=self.timeout_seconds)
+        response.raise_for_status()
+
+        with tempfile.NamedTemporaryFile(suffix=".wcs", delete=False) as handle:
+            handle.write(response.content)
+            wcs_path = Path(handle.name)
+
+        try:
+            # Astrometry.net's wcs_file is a FITS file, not ASTAP's text
+            # sidecar.  Read the primary header directly.
+            with fits.open(wcs_path) as hdul:
+                header = hdul[0].header.copy()
+
+            wcs = WCS(header).celestial
+
+            centre_x = (max(image_width_px, 1) - 1) / 2.0
+            centre_y = (max(image_height_px, 1) - 1) / 2.0
+            ra_deg, dec_deg = wcs.pixel_to_world_values(centre_x, centre_y)
+
+            scales_deg = proj_plane_pixel_scales(wcs)
+            scale_x_arcsec = float(scales_deg[0]) * 3600.0
+            scale_y_arcsec = float(scales_deg[1]) * 3600.0
+            pixel_scale = (scale_x_arcsec + scale_y_arcsec) / 2.0
+
+            matrix = wcs.pixel_scale_matrix
+            cd11 = float(matrix[0, 0])
+            cd12 = float(matrix[0, 1])
+            cd21 = float(matrix[1, 0])
+            cd22 = float(matrix[1, 1])
+
+            # Astropy/WCS expresses the transform in FITS pixel coordinates,
+            # whose image Y handedness is opposite to AstroFrame's internal
+            # sky-plane convention.  Normalise here so every PlateSolution uses
+            # the same orientation/parity convention regardless of solver.
+            orientation = -math.degrees(math.atan2(cd12, cd11))
+            determinant = cd11 * cd22 - cd12 * cd21
+            parity = -1.0 if determinant >= 0 else 1.0
+
+            width_deg = scale_x_arcsec * max(image_width_px, 1) / 3600.0
+            height_deg = scale_y_arcsec * max(image_height_px, 1) / 3600.0
+            radius_deg = math.hypot(width_deg, height_deg) / 2.0
+
+            self._say(
+                f"Astrometry.net WCS: centre {float(ra_deg):.8f}, "
+                f"{float(dec_deg):.8f}; scale {pixel_scale:.6f} arcsec/px; "
+                f"orientation {orientation:.6f} deg; parity {parity:+.0f}."
+            )
+
+            return PlateSolution(
+                ra_deg=float(ra_deg) % 360.0,
+                dec_deg=float(dec_deg),
+                pixel_scale_arcsec=pixel_scale,
+                orientation_deg=orientation,
+                parity=parity,
+                radius_deg=radius_deg,
+                image_width_deg=width_deg,
+                image_height_deg=height_deg,
+                solver="Astrometry.net",
+                job_id=int(job_id),
+                solve_mode=solve_mode,
+                solve_seconds=solve_seconds,
+            )
+        finally:
+            try:
+                wcs_path.unlink()
+            except OSError:
+                pass
+
     def solution_from_job(
         self,
         job_id: int,
@@ -1279,6 +1360,19 @@ class AstrometryNetClient:
         else:
             calibration = self.wait_for_solution(
                 job_id, progress=progress, cancelled=cancelled
+            )
+
+        try:
+            return self._solution_from_wcs_job(
+                job_id,
+                image_width_px=image_width_px,
+                image_height_px=image_height_px,
+                solve_mode="Online existing job",
+            )
+        except Exception as exc:
+            self._say(
+                f"Astrometry.net WCS could not be used for job #{job_id}; "
+                f"falling back to calibration summary: {exc}"
             )
 
         published_pixel_scale = float(calibration["pixscale"])
@@ -1459,6 +1553,21 @@ class AstrometryNetClient:
             job_id=job_id,
             status="success",
         )
+
+        if job_id is not None:
+            try:
+                return self._solution_from_wcs_job(
+                    job_id,
+                    image_width_px=image_width_px,
+                    image_height_px=image_height_px,
+                    solve_mode="Online blind",
+                    solve_seconds=time.monotonic() - started,
+                )
+            except Exception as exc:
+                self._say(
+                    f"Astrometry.net WCS could not be used for job #{job_id}; "
+                    f"falling back to calibration summary: {exc}"
+                )
 
         try:
             pixel_scale = float(calibration["pixscale"])
