@@ -1,6 +1,6 @@
-# Installing AstroFrame 1.0 RC1 on macOS
+# Installing AstroFrame 1.0.0 on macOS
 
-AstroFrame 1.0 RC1 is currently being distributed to a small group of private testers before a wider release.
+AstroFrame 1.0.0 is distributed as a macOS disk image (DMG).
 
 ## Install
 
@@ -9,13 +9,13 @@ AstroFrame 1.0 RC1 is currently being distributed to a small group of private te
 3. Eject the AstroFrame disk image.
 4. Open AstroFrame from your Applications folder.
 
-## First-launch security notice for the private RC1
+## First-launch security notice
 
-This private RC1 package is not yet Developer ID signed and notarized for public distribution. macOS may therefore refuse the first launch even when the package came directly from the AstroFrame project owner.
+AstroFrame 1.0.0 is not yet Developer ID signed and notarized. macOS may therefore refuse the first launch even when the package came directly from the AstroFrame project owner.
 
-Only override macOS security if you expected this private test build and received it from a source you trust. After attempting to open AstroFrame, macOS may offer **Open Anyway** under **System Settings → Privacy & Security**. Once approved, subsequent launches should behave normally.
+Only override macOS security if you expected this AstroFrame build and received it from a source you trust. After attempting to open AstroFrame, macOS may offer **Open Anyway** under **System Settings → Privacy & Security**. Once approved, subsequent launches should behave normally.
 
-The DMG is accompanied by a SHA-256 checksum file. Private testers can use it to confirm that the downloaded package is byte-for-byte identical to the package produced for testing.
+The DMG is accompanied by a SHA-256 checksum file. You can use it to confirm that the downloaded package is byte-for-byte identical to the published release artifact.
 
 ## Plate solving
 
@@ -32,7 +32,3 @@ On first launch:
 5. Optionally import one or more target collections.
 
 User settings, observing sites, rigs, cached solutions and imported knowledge are stored outside the application bundle, so replacing AstroFrame.app with a newer build should not remove them.
-
-## Private RC1 status
-
-The macOS application itself has passed the project's RC1 smoke tests. This installation package is the next test: the aim is to find any assumptions that only worked on the development machines before wider distribution.
