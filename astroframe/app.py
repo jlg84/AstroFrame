@@ -1,6 +1,7 @@
 import sys
+from pathlib import Path
 
-from PySide6.QtGui import QColor, QPalette
+from PySide6.QtGui import QColor, QIcon, QPalette
 from PySide6.QtWidgets import QApplication
 
 from .flexible_import_dialog import run_flexible_collection_import_dialog
@@ -335,6 +336,12 @@ QToolTip {
 
 def run() -> int:
     app = QApplication(sys.argv)
+
+    base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+    icon_path = base_dir / "assets" / "AstroFrame_1024.png"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
+
     app.setApplicationName("AstroFrame")
     app.setOrganizationName("AstroFrame")
     app.setStyle("Fusion")
