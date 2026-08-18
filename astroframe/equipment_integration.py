@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
 import requests
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QHBoxLayout,
@@ -10,25 +13,46 @@ from .equipment_browser import EquipmentBrowserDialog
 from .equipment_library import CameraEntry, EquipmentLibrary, OpticalEntry
 
 CATALOG_URL = "https://raw.githubusercontent.com/tophrchris/astroguide-metadata/main/v1/packages/equipment/astrophotography_equipment_catalog_v1.json"
+CATALOG_RELATIVE_PATH = Path("data") / "equipment_catalog_v1.json"
 
 _library_cache: EquipmentLibrary | None = None
+
+
+def _bundled_catalog_path() -> Path:
+    """Return the catalogue path in source checkouts and PyInstaller bundles."""
+    base_dir = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
+    return base_dir / CATALOG_RELATIVE_PATH
 
 
 def _library(parent: QWidget) -> EquipmentLibrary | None:
     global _library_cache
     if _library_cache is not None:
         return _library_cache
+
+    local_path = _bundled_catalog_path()
+    try:
+        if local_path.exists():
+            _library_cache = EquipmentLibrary.from_astroguide_file(local_path)
+            return _library_cache
+    except Exception as local_exc:
+        # A damaged bundled catalogue should not make the feature unusable when
+        # a current online copy can still be reached.
+        local_error = f"{type(local_exc).__name__}: {local_exc}"
+    else:
+        local_error = f"Bundled catalogue not found at {local_path}"
+
     try:
         response = requests.get(CATALOG_URL, timeout=20)
         response.raise_for_status()
         _library_cache = EquipmentLibrary.from_astroguide_dict(response.json())
         return _library_cache
-    except Exception as exc:
+    except Exception as online_exc:
         QMessageBox.warning(
             parent,
             "Equipment Library",
             "AstroFrame could not load the expanded equipment catalogue.\n\n"
-            f"{type(exc).__name__}: {exc}\n\n"
+            f"Bundled copy: {local_error}\n"
+            f"Online fallback: {type(online_exc).__name__}: {online_exc}\n\n"
             "Your existing equipment remains unchanged.",
         )
         return None
