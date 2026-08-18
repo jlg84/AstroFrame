@@ -6,7 +6,10 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets/AstroFrame_1024.png', 'assets')],
+    datas=[
+        ('assets/AstroFrame_1024.png', 'assets'),
+        ('data/equipment_catalog_v1.json', 'data'),
+    ],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
