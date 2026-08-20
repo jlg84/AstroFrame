@@ -45,7 +45,27 @@ The packaging script creates a versioned macOS DMG and SHA-256 checksum under `r
 
 See [macOS installation](docs/MAC_INSTALL.md) and the [RC1 tester guide](docs/RC1_TESTER_GUIDE.md).
 
-Windows build and installation instructions will be added once the Windows package has been built and tested.
+The Windows package has passed its RC1 smoke test. Build/package instructions are provided below, and installation requirements are covered in the Windows installation guide.
+
+## Windows RC1 build and package
+
+Build the Windows application from a Windows Python environment with:
+
+```powershell
+pyinstaller --clean --noconfirm AstroFrame-Windows.spec
+```
+
+After `dist\AstroFrame\AstroFrame.exe` has passed its smoke test, create the private-test ZIP and SHA-256 checksum with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File package_windows_release.ps1
+```
+
+The packaging script creates a versioned Windows x64 ZIP and checksum under `release/`, and includes `READ ME FIRST.md` in the package.
+
+ASTAP and an ASTAP star database are required for normal local plate solving and are not bundled with AstroFrame.
+
+See [Windows installation](docs/WINDOWS_INSTALL.md) and the [RC1 tester guide](docs/RC1_TESTER_GUIDE.md).
 
 ## Core workflow
 
@@ -65,6 +85,7 @@ Windows build and installation instructions will be added once the Windows packa
 - [Using AstroFrame with NINA](docs/USING_WITH_NINA.md)
 - [Using AstroFrame with ASIAIR](docs/USING_WITH_ASIAIR.md)
 - [macOS installation](docs/MAC_INSTALL.md)
+- [Windows installation](docs/WINDOWS_INSTALL.md)
 - [RC1 tester guide](docs/RC1_TESTER_GUIDE.md)
 - [Project vision](VISION.md)
 

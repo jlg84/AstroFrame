@@ -362,6 +362,8 @@ class AstapClient:
     DEFAULT_PATHS = (
         Path("/Applications/ASTAP.app/Contents/MacOS/astap"),
         Path("/Applications/ASTAP.app/Contents/MacOS/astap.app/Contents/MacOS/astap"),
+        Path(r"C:\Program Files\astap\astap.exe"),
+        Path(r"C:\Program Files (x86)\astap\astap.exe"),
     )
 
     def __init__(
@@ -374,7 +376,7 @@ class AstapClient:
         self.timeout_seconds = timeout_seconds
         if self.executable is None:
             raise PlateSolveError(
-                "ASTAP was not found. Expected it in /Applications/ASTAP.app."
+                "ASTAP was not found. Install ASTAP or configure its executable path."
             )
 
     @classmethod

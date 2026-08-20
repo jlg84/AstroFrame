@@ -6,7 +6,10 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[('assets/AstroFrame_1024.png', 'assets')],
+    datas=[
+        ('assets/AstroFrame_1024.png', 'assets'),
+        ('data/equipment_catalog_v1.json', 'data'),
+    ],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
@@ -30,8 +33,8 @@ app = BUNDLE(
     info_plist={
         'CFBundleName': 'AstroFrame',
         'CFBundleDisplayName': 'AstroFrame',
-        'CFBundleShortVersionString': '1.0.0',
-        'CFBundleVersion': '1',
+        'CFBundleShortVersionString': '1.1.0-beta1',
+        'CFBundleVersion': '2',
         'NSHighResolutionCapable': True,
     },
 )
