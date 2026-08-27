@@ -2012,7 +2012,7 @@ class MainWindow(QMainWindow):
 
         if not self.available_rigs:
             empty = QLabel(
-                "No imaging setups yet.\\n"
+                "No imaging setups yet.\n"
                 "Add the telescope/camera combinations you actually use."
             )
             empty.setObjectName("helpText")
@@ -2162,7 +2162,7 @@ class MainWindow(QMainWindow):
         form.addRow("Setup name", setup_name)
         form.addRow("Camera", camera_combo)
         form.addRow("Telescope / lens", telescope_combo)
-        form.addRow("Reducer / extender", modifier_combo)
+        form.addRow("Reducer / Barlow", modifier_combo)
         form.addRow("Custom factor", custom_factor)
         layout.addLayout(form)
 
@@ -2341,15 +2341,40 @@ class MainWindow(QMainWindow):
             setup_list.clear()
             for record in records:
                 factor = float(record.get("optical_factor", 1.0))
+                effective_focal = float(record.get("focal_length_mm", 0.0))
+                sensor_width = float(record.get("sensor_width_mm", 0.0))
+                sensor_height = float(record.get("sensor_height_mm", 0.0))
+
+                # Keep legacy Seestar records consistent with the framing code.
+                if str(record.get("camera_key", "")) == "seestar_s50_camera":
+                    sensor_width = 3.13
+                    sensor_height = 5.57
+
                 detail = (
                     f"{record.get('telescope_name', '')} + "
                     f"{record.get('camera_name', '')}"
                 )
                 if abs(factor - 1.0) > 0.001:
                     detail += f" · {factor:.2f}×"
+
+                if effective_focal > 0 and sensor_width > 0 and sensor_height > 0:
+                    display_rig = Rig(
+                        key="display",
+                        name="display",
+                        sensor_width_mm=sensor_width,
+                        sensor_height_mm=sensor_height,
+                        focal_length_mm=effective_focal,
+                        colour="#FFFFFF",
+                    )
+                    detail += (
+                        f" · {effective_focal:.0f} mm"
+                        f" · {display_rig.fov_width_deg:.2f}° × "
+                        f"{display_rig.fov_height_deg:.2f}°"
+                    )
+
                 setup_list.addItem(
                     QListWidgetItem(
-                        f"{record.get('name', 'Setup')}\\n{detail}"
+                        f"{record.get('name', 'Setup')}\n{detail}"
                     )
                 )
 

@@ -144,7 +144,16 @@ class KnowledgeStore:
         # example M31 as RA 4244, Dec 411608). Do not require users to edit or
         # delete their knowledge database; repair invalid sky positions from
         # the best surviving collection source whenever such a record exists.
-        if any(not self._coordinates_valid(t.ra_deg, t.dec_deg) for t in self._targets.values()):
+        # Missing coordinates are legitimate for incomplete catalogue entries
+        # and must not trigger an expensive full rebuild on every launch.
+        # The RC1 repair is only for stored coordinates that are present but
+        # physically impossible.
+        def needs_coordinate_repair(target) -> bool:
+            if target.ra_deg is None or target.dec_deg is None:
+                return False
+            return not self._coordinates_valid(target.ra_deg, target.dec_deg)
+
+        if any(needs_coordinate_repair(t) for t in self._targets.values()):
             self.rebuild_canonical_coordinates(save=True)
 
     @staticmethod

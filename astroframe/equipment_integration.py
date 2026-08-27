@@ -5,11 +5,12 @@ from pathlib import Path
 
 import requests
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QHBoxLayout,
+    QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPushButton, QVBoxLayout, QWidget,
 )
 
 from .equipment_browser import EquipmentBrowserDialog
+from .equipment_catalog import OPTICAL_MODIFIERS
 from .equipment_library import CameraEntry, EquipmentLibrary, OpticalEntry
 
 CATALOG_URL = "https://raw.githubusercontent.com/tophrchris/astroguide-metadata/main/v1/packages/equipment/astrophotography_equipment_catalog_v1.json"
@@ -96,6 +97,21 @@ def install_equipment_library_integration(main_window_class) -> None:
         sensor_height = QDoubleSpinBox(); sensor_height.setRange(0.1, 100.0); sensor_height.setDecimals(3); sensor_height.setSuffix(" mm")
         native_focal = QDoubleSpinBox(); native_focal.setRange(1.0, 10000.0); native_focal.setDecimals(2); native_focal.setSuffix(" mm")
         effective_focal = QDoubleSpinBox(); effective_focal.setRange(1.0, 10000.0); effective_focal.setDecimals(2); effective_focal.setSuffix(" mm")
+        modifier_combo = QComboBox()
+        for label, factor in OPTICAL_MODIFIERS:
+            modifier_combo.addItem(label, factor)
+        modifier_combo.addItem("Custom factor…", "custom")
+
+        existing_factor = float(existing.get("optical_factor", 1.0))
+        factor_found = False
+        for i in range(modifier_combo.count() - 1):
+            if abs(float(modifier_combo.itemData(i)) - existing_factor) < 0.001:
+                modifier_combo.setCurrentIndex(i)
+                factor_found = True
+                break
+        if not factor_found:
+            modifier_combo.setCurrentIndex(modifier_combo.count() - 1)
+
         sensor_width.setValue(float(existing.get("sensor_width_mm", 17.0)))
         sensor_height.setValue(float(existing.get("sensor_height_mm", 13.0)))
         native_value = float(existing.get("native_focal_length_mm", existing.get("focal_length_mm", 400.0)))
@@ -108,8 +124,22 @@ def install_equipment_library_integration(main_window_class) -> None:
         form.addRow("Sensor height", sensor_height)
         form.addRow("Telescope / lens", optic_row)
         form.addRow("Native focal length", native_focal)
+        form.addRow("Reducer / Barlow", modifier_combo)
         form.addRow("Effective focal length", effective_focal)
         layout.addLayout(form)
+        def update_effective_focal() -> None:
+            factor_data = modifier_combo.currentData()
+            if factor_data == "custom":
+                effective_focal.setReadOnly(False)
+                return
+            factor = float(factor_data)
+            effective_focal.setReadOnly(True)
+            effective_focal.setValue(native_focal.value() * factor)
+
+        modifier_combo.currentIndexChanged.connect(update_effective_focal)
+        native_focal.valueChanged.connect(update_effective_focal)
+        update_effective_focal()
+
 
         note = QLabel(
             "Sensor dimensions and native focal length come from the selected catalogue entries. "
