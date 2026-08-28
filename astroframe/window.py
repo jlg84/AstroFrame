@@ -3813,7 +3813,13 @@ class MainWindow(QMainWindow):
         theta=math.radians(float(self.viewer.rig_rotation(str(state.get("rig_key") or ""))))
         c,sn=math.cos(theta),math.sin(theta)
         for pane in panes:
-            coord=type("T",(),{"ra_deg":pane["ra_deg"],"dec_deg":pane["dec_deg"]})()
+            coord=type("T",(),{
+                "ra_deg": pane["ra_deg"],
+                "dec_deg": pane["dec_deg"],
+                "canonical_name": "",
+                "common_name": "",
+                "aliases": [],
+            })()
             pos=self._target_pixel_position(coord)
             if pos is None: continue
             cx,cy=pos; pts=[]
