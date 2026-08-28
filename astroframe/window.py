@@ -13,7 +13,7 @@ import requests
 
 from PySide6.QtCore import QObject, QDate, QSettings, QThread, QTimer, Qt, Signal, Slot, QPointF
 from astropy.coordinates import SkyCoord, get_constellation
-from PySide6.QtGui import QColor, QPen, QBrush, QPolygonF
+from PySide6.QtGui import QColor, QFont, QPen, QBrush, QPolygonF
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -3832,6 +3832,14 @@ class MainWindow(QMainWindow):
             label_text = f"{rig.name} — {pane_no}" if pane_no == 1 else str(pane_no)
             label = self.viewer.scene.addSimpleText(label_text)
             label.setBrush(QBrush(QColor(rig.colour)))
+            font = QFont()
+            font.setPointSize(18)
+            font.setBold(True)
+            label.setFont(font)
+            label.setFlag(
+                label.GraphicsItemFlag.ItemIgnoresTransformations,
+                True,
+            )
             label.setPos(pts[0] + QPointF(4, 3))
             label.setZValue(12)
             self._mosaic_preview_items.append(label)
