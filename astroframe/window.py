@@ -2052,6 +2052,15 @@ class MainWindow(QMainWindow):
     def _available_rig_toggled(self, rig: Rig, checked: bool) -> None:
         """Availability controls both overlays and Advisor eligibility."""
         self.viewer.set_rig_visible(rig, checked)
+
+        # RC22x: if the user makes a rig available and no framing rig is
+        # currently active, make that rig active immediately.  A visible frame
+        # should not require a later Equipment Advisor click before it can be
+        # dragged or reframed.
+        if checked and self.current_solution is not None and not self._working_framing:
+            self._activate_reference_rig_framing(rig.key)
+            self._apply_active_rig_emphasis()
+
         active_key = str((self._working_framing or {}).get("rig_key") or "")
         if not checked and active_key == rig.key:
             self._working_framing = None
@@ -7191,6 +7200,17 @@ class MainWindow(QMainWindow):
     def _apply_solution(self, solution: PlateSolution, *, cached: bool) -> None:
         self.current_solution = solution
         self.online_fallback_button.hide()
+
+        # RC22x: a rig may already be checked before the image becomes solved.
+        # Once accurate astrometry exists, establish an active framing rig
+        # automatically so its visible frame is immediately draggable.
+        if not self._working_framing:
+            for rig in self.available_rigs:
+                check = self.rig_checks.get(rig.key)
+                if check is not None and check.isChecked():
+                    self._activate_reference_rig_framing(rig.key)
+                    self._apply_active_rig_emphasis()
+                    break
         if hasattr(self, "observing_season_result"):
             self.observing_season_result.hide()
         if hasattr(self, "observability_find_button"):
