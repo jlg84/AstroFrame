@@ -108,6 +108,12 @@ class OverlayItem(QGraphicsPolygonItem):
         self.label.setFlag(QGraphicsSimpleTextItem.GraphicsItemFlag.ItemIgnoresTransformations)
         self._rebuild_polygon()
 
+    def set_frame_appearance(self, colour=None, width=3):
+        frame_colour = QColor(colour or self.rig.colour)
+        self.setPen(QPen(frame_colour, float(width)))
+        self.label.setBrush(QBrush(frame_colour))
+        self.update()
+
     def _rebuild_polygon(self) -> None:
         import math
         cx, cy = self._centre.x(), self._centre.y(); hw, hh = self._width/2.0, self._height/2.0
@@ -130,22 +136,29 @@ class OverlayItem(QGraphicsPolygonItem):
 
 class DragGhostWidget(QWidget):
     def __init__(self,parent=None):
-        super().__init__(parent); self._points=[]; self._colour=QColor("#FFFFFF"); self._name=""
+        super().__init__(parent); self._points=[]; self._colour=QColor("#FFFFFF"); self._name=""; self._width=3.0
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents,True); self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground,True); self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground,True); self.hide()
-    def set_frame(self,points,colour,name): self._points=[QPointF(p) for p in points]; self._colour=QColor(colour); self._name=str(name); self.update()
+    def set_frame(self,points,colour,name,width=3): self._points=[QPointF(p) for p in points]; self._colour=QColor(colour); self._name=str(name); self._width=float(width); self.update()
     def paintEvent(self,event):
         if len(self._points)!=4:return
-        p=QPainter(self); p.setRenderHint(QPainter.RenderHint.Antialiasing,True); p.setPen(QPen(self._colour,3)); p.setBrush(QBrush(Qt.BrushStyle.NoBrush)); p.drawPolygon(QPolygonF(self._points)); a=self._points[0]; f=QFont(); f.setPointSize(10); f.setBold(True); p.setFont(f); p.drawText(int(a.x()+8),int(a.y()+18),self._name); p.end()
+        p=QPainter(self); p.setRenderHint(QPainter.RenderHint.Antialiasing,True); p.setPen(QPen(self._colour,self._width)); p.setBrush(QBrush(Qt.BrushStyle.NoBrush)); p.drawPolygon(QPolygonF(self._points)); a=self._points[0]; f=QFont(); f.setPointSize(10); f.setBold(True); p.setFont(f); p.drawText(int(a.x()+8),int(a.y()+18),self._name); p.end()
 
 
 class ImageViewer(QGraphicsView):
     image_loaded=Signal(str,int,int); overlay_changed=Signal(); catalogue_marker_clicked=Signal(str); drag_debug=Signal(str); placement_clicked=Signal(float,float); rig_label_clicked=Signal(str)
     def __init__(self,parent=None):
         super().__init__(parent); self.setRenderHints(QPainter.RenderHint.Antialiasing|QPainter.RenderHint.SmoothPixmapTransform); self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag); self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse); self.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorViewCenter); self.setFrameShape(QFrame.Shape.NoFrame); self._placement_mode=False; self._active_drag_rig_key=None
-        self.scene=QGraphicsScene(self); self.setScene(self.scene); self.pixmap_item=None; self.overlays={}; self.target_marker_items=[]; self.target_marker_id=None; self.catalogue_dot_items=[]; self.rig_rotation_offsets={}; self.reference_width_deg=3.0; self.current_rotation_deg=0.0; self.setBackgroundBrush(QBrush(QColor("#090B0F"))); self.minimum_zoom=0.005; self.maximum_zoom=20.0
+        self.scene=QGraphicsScene(self); self.setScene(self.scene); self.pixmap_item=None; self.overlays={}; self.target_marker_items=[]; self.target_marker_id=None; self.catalogue_dot_items=[]; self.rig_rotation_offsets={}; self.reference_width_deg=3.0; self.current_rotation_deg=0.0; self.frame_colour_override=None; self.frame_line_width=3.0; self.setBackgroundBrush(QBrush(QColor("#090B0F"))); self.minimum_zoom=0.005; self.maximum_zoom=20.0
         self._overlay_drag_timer=QTimer(self); self._overlay_drag_timer.setInterval(16); self._overlay_drag_timer.timeout.connect(self._poll_overlay_drag); self._overlay_drag_tick=0; self._drag_ghost=DragGhostWidget(self.viewport()); self._drag_ghost.setGeometry(self.viewport().rect())
     @property
     def has_image(self): return self.pixmap_item is not None
+
+    def set_frame_appearance(self, colour=None, width=3):
+        self.frame_colour_override = colour or None
+        self.frame_line_width = float(width)
+        for overlay in self.overlays.values():
+            overlay.set_frame_appearance(self.frame_colour_override, self.frame_line_width)
+        self.viewport().update()
     def load_image(self,path):
         pixmap=QPixmap(path)
         if pixmap.isNull(): raise ValueError("The selected image could not be opened.")
@@ -206,7 +219,7 @@ class ImageViewer(QGraphicsView):
         try:self.viewport().grabMouse()
         except Exception:pass
         self._overlay_drag_tick=0;self._overlay_drag_timer.start()
-    def _update_drag_ghost(self,overlay):self._drag_ghost.setGeometry(self.viewport().rect());self._drag_ghost.set_frame([QPointF(self.mapFromScene(p)) for p in overlay.scene_corners()],overlay.rig.colour,overlay.rig.name);self._drag_ghost.raise_()
+    def _update_drag_ghost(self,overlay):self._drag_ghost.setGeometry(self.viewport().rect());self._drag_ghost.set_frame([QPointF(self.mapFromScene(p)) for p in overlay.scene_corners()],self.frame_colour_override or overlay.rig.colour,overlay.rig.name,self.frame_line_width);self._drag_ghost.raise_()
     def _poll_overlay_drag(self):
         overlay=getattr(self,"_dragging_overlay",None)
         if overlay is None:self._overlay_drag_timer.stop();return
@@ -279,12 +292,12 @@ class ImageViewer(QGraphicsView):
                 try:self.scene.removeItem(item)
                 except RuntimeError:pass
                 self.overlays.pop(key,None);self.rig_rotation_offsets.pop(key,None);continue
-            item.rig=rig;item.setPen(QPen(QColor(rig.colour),3));item.label.setText(rig.name);item.label.rig_key=rig.key;item.label.setBrush(QBrush(QColor(rig.colour)))
+            item.rig=rig;item.label.setText(rig.name);item.label.rig_key=rig.key;item.set_frame_appearance(self.frame_colour_override,self.frame_line_width)
         self._refresh_overlay_sizes()
     def set_rig_visible(self,rig,visible):
         if self.pixmap_item is None:return
         if rig.key not in self.overlays:
-            item=OverlayItem(rig,moved_callback=lambda:self.overlay_changed.emit(),label_clicked_callback=lambda key:self.rig_label_clicked.emit(key));self.scene.addItem(item);self.overlays[rig.key]=item;item.set_scene_center(self.scene.sceneRect().center());item.setRotation(self.current_rotation_deg+self.rig_rotation_offsets.get(rig.key,0.0))
+            item=OverlayItem(rig,moved_callback=lambda:self.overlay_changed.emit(),label_clicked_callback=lambda key:self.rig_label_clicked.emit(key));self.scene.addItem(item);self.overlays[rig.key]=item;item.set_scene_center(self.scene.sceneRect().center());item.setRotation(self.current_rotation_deg+self.rig_rotation_offsets.get(rig.key,0.0));item.set_frame_appearance(self.frame_colour_override,self.frame_line_width)
         self.overlays[rig.key].setVisible(visible);self._refresh_overlay_sizes()
     def set_rotation(self,degrees):
         self.current_rotation_deg=degrees

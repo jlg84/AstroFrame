@@ -871,6 +871,33 @@ class MainWindow(QMainWindow):
         reset_framing.clicked.connect(self._reset_framing)
         framing.layout.addWidget(reset_framing)
 
+        appearance_row = QHBoxLayout()
+        appearance_label = QLabel("Frame")
+        appearance_label.setObjectName("fieldLabel")
+
+        self.frame_colour_combo = QComboBox()
+        self.frame_colour_combo.addItem("Rig colours", None)
+        self.frame_colour_combo.addItem("White", "#FFFFFF")
+        self.frame_colour_combo.addItem("Yellow", "#FFD84D")
+        self.frame_colour_combo.addItem("Cyan", "#4DEBFF")
+        self.frame_colour_combo.addItem("Magenta", "#FF5CE1")
+        self.frame_colour_combo.setToolTip("Choose a common colour for framing overlays, or keep each rig's own colour.")
+
+        self.frame_width_combo = QComboBox()
+        self.frame_width_combo.addItem("Thin", 2)
+        self.frame_width_combo.addItem("Normal", 3)
+        self.frame_width_combo.addItem("Thick", 5)
+        self.frame_width_combo.setCurrentIndex(1)
+        self.frame_width_combo.setToolTip("Adjust framing overlay line thickness.")
+
+        appearance_row.addWidget(appearance_label)
+        appearance_row.addWidget(self.frame_colour_combo, 1)
+        appearance_row.addWidget(self.frame_width_combo, 1)
+        framing.layout.addLayout(appearance_row)
+
+        self.frame_colour_combo.currentIndexChanged.connect(self._frame_appearance_changed)
+        self.frame_width_combo.currentIndexChanged.connect(self._frame_appearance_changed)
+
         mosaic_title = QLabel("<b>Mosaic planning</b>")
         mosaic_title.setObjectName("helpText")
         framing.layout.addWidget(mosaic_title)
@@ -7557,6 +7584,11 @@ class MainWindow(QMainWindow):
         degrees = value / 10.0
         self.rotation_value.setText(f"{degrees:.1f}°")
         self.viewer.set_rotation(degrees)
+
+    def _frame_appearance_changed(self, *args) -> None:
+        colour = self.frame_colour_combo.currentData()
+        width = self.frame_width_combo.currentData()
+        self.viewer.set_frame_appearance(colour, width)
 
     def _reset_framing(self) -> None:
         self.rotation.setValue(0)
