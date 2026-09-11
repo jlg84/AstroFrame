@@ -2084,7 +2084,11 @@ class MainWindow(QMainWindow):
         # currently active, make that rig active immediately.  A visible frame
         # should not require a later Equipment Advisor click before it can be
         # dragged or reframed.
-        if checked and self.current_solution is not None and not self._working_framing:
+        if (
+            checked
+            and self.current_solution is not None
+            and not getattr(self.viewer, "_active_drag_rig_key", None)
+        ):
             self._activate_reference_rig_framing(rig.key)
             self._apply_active_rig_emphasis()
 
@@ -7231,7 +7235,7 @@ class MainWindow(QMainWindow):
         # RC22x: a rig may already be checked before the image becomes solved.
         # Once accurate astrometry exists, establish an active framing rig
         # automatically so its visible frame is immediately draggable.
-        if not self._working_framing:
+        if not getattr(self.viewer, "_active_drag_rig_key", None):
             for rig in self.available_rigs:
                 check = self.rig_checks.get(rig.key)
                 if check is not None and check.isChecked():
