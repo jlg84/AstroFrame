@@ -235,7 +235,7 @@ class ImageViewer(QGraphicsView):
         rig=overlay.rig;centre=overlay.scene_center();width=float(getattr(overlay,"_width",1.0));height=float(getattr(overlay,"_height",1.0));rotation=overlay.rotation();was_visible=bool(getattr(self,"_overlay_drag_was_visible",True))
         try:self.scene.removeItem(overlay)
         except Exception:pass
-        replacement=OverlayItem(rig,moved_callback=lambda:self.overlay_changed.emit(),label_clicked_callback=lambda key:self.rig_label_clicked.emit(key));self.scene.addItem(replacement);replacement.set_overlay_size(width,height);replacement.setRotation(rotation);replacement.set_scene_center(centre);replacement.setVisible(was_visible);self.overlays[rig.key]=replacement;self.viewport().unsetCursor()
+        replacement=OverlayItem(rig,moved_callback=lambda:self.overlay_changed.emit(),label_clicked_callback=lambda key:self.rig_label_clicked.emit(key));self.scene.addItem(replacement);replacement.set_overlay_size(width,height);replacement.setRotation(rotation);replacement.set_scene_center(centre);replacement.set_frame_appearance(self.frame_colour_override,self.frame_line_width);replacement.setVisible(was_visible);self.overlays[rig.key]=replacement;self.viewport().unsetCursor()
         try:self.viewport().releaseMouse()
         except Exception:pass
         self.setDragMode(getattr(self,"_overlay_previous_drag_mode",QGraphicsView.DragMode.ScrollHandDrag));self._dragging_overlay=None;self._overlay_drag_start_scene=None;self._overlay_drag_start_pos=None;self._overlay_previous_drag_mode=None;self._overlay_drag_was_visible=None;self.viewport().update();self.overlay_changed.emit()

@@ -884,7 +884,7 @@ class MainWindow(QMainWindow):
         self.frame_colour_combo.setToolTip("Choose a common colour for framing overlays, or keep each rig's own colour.")
 
         self.frame_width_combo = QComboBox()
-        self.frame_width_combo.addItem("Thin", 2)
+        self.frame_width_combo.addItem("Thin", 1)
         self.frame_width_combo.addItem("Normal", 3)
         self.frame_width_combo.addItem("Thick", 5)
         self.frame_width_combo.setCurrentIndex(1)
@@ -2096,11 +2096,25 @@ class MainWindow(QMainWindow):
         if not checked and active_key == rig.key:
             self._working_framing = None
             self._accepted_framing = None
+            self.viewer.set_active_drag_rig(None)
             if hasattr(self, "mosaic_grid_combo"):
                 self.mosaic_grid_combo.blockSignals(True)
                 self.mosaic_grid_combo.setCurrentText("Single frame")
                 self.mosaic_grid_combo.blockSignals(False)
                 self._clear_mosaic_preview()
+
+            # If another available rig remains checked, promote it immediately
+            # so a visible frame never becomes stranded and non-draggable.
+            for candidate in self.available_rigs:
+                check = self.rig_checks.get(candidate.key)
+                if (
+                    candidate.key != rig.key
+                    and check is not None
+                    and check.isChecked()
+                ):
+                    self._activate_reference_rig_framing(candidate.key)
+                    break
+
             self._apply_active_rig_emphasis()
             self._refresh_nina_export()
         self._update_active_framing_rig_label()
