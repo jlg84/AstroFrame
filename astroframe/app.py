@@ -358,6 +358,6 @@ def run() -> int:
     install_rc1_onboarding_fixes(MainWindow)
 
     window = MainWindow()
-    window.setWindowTitle("AstroFrame 1.0.1")
+    window.setWindowTitle("AstroFrame 1.0.2")
     window.show()
     return app.exec()
