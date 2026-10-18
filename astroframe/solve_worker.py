@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from threading import Event
 
 from PySide6.QtCore import QObject, Signal, Slot
@@ -33,6 +34,7 @@ class PlateSolveWorker(QObject):
         target_dec_deg: float | None = None,
         target_search_radius_deg: float | None = None,
         astrometry_job_reference: str | int | None = None,
+        wcs_output_path: str | Path | None = None,
     ) -> None:
         super().__init__()
         self.solver_preference = solver_preference
@@ -45,6 +47,7 @@ class PlateSolveWorker(QObject):
         self.target_dec_deg = target_dec_deg
         self.target_search_radius_deg = target_search_radius_deg
         self.astrometry_job_reference = astrometry_job_reference
+        self.wcs_output_path = wcs_output_path
         self._cancel_event = Event()
 
     def cancel(self) -> None:
@@ -84,8 +87,14 @@ class PlateSolveWorker(QObject):
                 else ""
             )
         )
-        return local.solve(
-            self.image_path,
+        # Each ASTAP retry must start without a stale WCS sidecar.
+        wcs_path = Path(self.wcs_output_path) if self.wcs_output_path else None
+        if wcs_path is not None:
+            wcs_path.unlink(missing_ok=True)
+
+        try:
+            solution = local.solve(
+                self.image_path,
             image_width_px=self.image_width_px,
             image_height_px=self.image_height_px,
             estimated_width_deg=(requested_width if requested_width is not None and requested_width > 0 else None),
@@ -106,7 +115,14 @@ class PlateSolveWorker(QObject):
             progress=self.progress.emit,
             log=self.log.emit,
             cancelled=self._is_cancelled,
-        )
+            wcs_output_path=self.wcs_output_path,
+            )
+        except BaseException:
+            if wcs_path is not None:
+                wcs_path.unlink(missing_ok=True)
+            raise
+
+        return solution
 
     def _run_clue_recovery(self) -> PlateSolution:
         """Recover an internet image using a sky clue plus a precision scale sweep.

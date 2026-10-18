@@ -85,6 +85,10 @@ class SolveCache:
     def _path_for(self, image_path: str | Path) -> Path:
         return self.root / f"{self.image_hash(image_path)}.json"
 
+    def wcs_path_for(self, image_path: str | Path) -> Path:
+        """Return the WCS sidecar path for this exact image."""
+        return self._path_for(image_path).with_suffix(".wcs")
+
     def load_record(
         self,
         image_path: str | Path,
@@ -242,6 +246,7 @@ class SolveCache:
 
     def remove(self, image_path: str | Path) -> None:
         self._path_for(image_path).unlink(missing_ok=True)
+        self.wcs_path_for(image_path).unlink(missing_ok=True)
 
     def _migrate_legacy_records(self) -> None:
         """Best-effort migration of old path-based cache records.
@@ -637,6 +642,7 @@ class AstapClient:
         progress: Callable[[str], None] | None = None,
         log: Callable[[str], None] | None = None,
         cancelled: Callable[[], bool] | None = None,
+        wcs_output_path: str | Path | None = None,
     ) -> PlateSolution:
         source = Path(image_path)
         if not source.exists():
@@ -778,6 +784,11 @@ class AstapClient:
                 if detail:
                     message += f"\n\nASTAP: {detail}"
                 raise PlateSolveError(message)
+
+            if wcs_output_path is not None:
+                destination = Path(wcs_output_path)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(wcs_path, destination)
 
             if progress:
                 progress("Reading ASTAP solution…")

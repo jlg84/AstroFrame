@@ -7,6 +7,9 @@ from dataclasses import replace
 import json
 import math
 import re
+import shutil
+import tempfile
+from uuid import uuid4
 import textwrap
 
 import requests
@@ -59,6 +62,8 @@ from .plate_solve import (
     SolveCache,
 )
 from .solve_worker import PlateSolveWorker
+from .annotation_worker import AnnotationWorker
+from .galaxy_catalogue import find_galaxy_catalogue
 from .astrobin_import import AstroBinImportWorker
 from .observer import (
     ObserverProfile,
@@ -320,6 +325,7 @@ class MainWindow(QMainWindow):
         self.solve_thread: QThread | None = None
         self.solve_worker: PlateSolveWorker | None = None
         self.solve_request_id = 0
+        self._wcs_temp_paths: dict[int, Path] = {}
         self.solve_in_progress = False
         self._pending_assisted_solve: tuple[float, float, float, str] | None = None
         self._pending_auto_solve: tuple[str, float | None, float | None, float | None, str | None] | None = None
@@ -581,6 +587,15 @@ class MainWindow(QMainWindow):
         self.solve_button.setEnabled(False)
         self.solve_button.clicked.connect(lambda _checked=False: self.plate_solve())
         reference.layout.addWidget(self.solve_button)
+
+        self.annotate_button = QPushButton("Annotate Image…")
+        self.annotate_button.setEnabled(False)
+        self.annotate_button.clicked.connect(self.annotate_image)
+        self.annotate_button.setToolTip(
+            "Identify and label galaxies using the image's plate-solved WCS. "
+            "The annotated image is saved as a new file; the original is unchanged."
+        )
+        reference.layout.addWidget(self.annotate_button)
 
         self.online_fallback_button = QPushButton("Try Astrometry.net blind solve…")
         self.online_fallback_button.setToolTip(
@@ -5213,6 +5228,7 @@ class MainWindow(QMainWindow):
         self.solve_request_id += 1
         self.current_image_path = path
         self.current_solution = None
+        self.annotate_button.setEnabled(False)
         self.solve_in_progress = False
         self.solving_hint_name = None
         self.solving_hint_ra_hours = None
@@ -5528,6 +5544,15 @@ class MainWindow(QMainWindow):
         self.solve_details.hide()
 
         self.solve_thread = QThread(self)
+        wcs_temp_dir = Path(tempfile.gettempdir()) / "astroframe-wcs"
+        wcs_temp_dir.mkdir(parents=True, exist_ok=True)
+        next_request_id = self.solve_request_id + 1
+        wcs_temp_path = wcs_temp_dir / (
+            f"solve-{next_request_id}-{uuid4().hex}.wcs"
+        )
+        wcs_temp_path.unlink(missing_ok=True)
+        self._wcs_temp_paths[next_request_id] = wcs_temp_path
+
         self.solve_worker = PlateSolveWorker(
             solver_preference=solver_preference,
             api_key=api_key,
@@ -5539,6 +5564,7 @@ class MainWindow(QMainWindow):
             target_dec_deg=target_dec_deg,
             target_search_radius_deg=target_search_radius_deg,
             astrometry_job_reference=astrometry_job_reference,
+            wcs_output_path=wcs_temp_path,
         )
         solve_path = self.current_image_path
         self.solve_request_id += 1
@@ -5579,6 +5605,112 @@ class MainWindow(QMainWindow):
             lambda t=thread, w=worker: self._solve_finished_for(t, w)
         )
         self.solve_thread.start()
+
+    def annotate_image(self) -> None:
+        """Start galaxy annotation without changing the original image."""
+        if getattr(self, "annotation_thread", None) is not None:
+            return
+
+        if not self.current_image_path or self.current_solution is None:
+            QMessageBox.information(
+                self, "Annotate Image", "Load and plate-solve an image first."
+            )
+            return
+
+        source = Path(self.current_image_path)
+        wcs = self.solve_cache.wcs_path_for(source)
+        if not wcs.is_file():
+            QMessageBox.warning(
+                self, "WCS unavailable", "Run a fresh local ASTAP solve first."
+            )
+            return
+
+        catalogue = find_galaxy_catalogue()
+        if catalogue is None:
+            QMessageBox.warning(
+                self, "Catalogue unavailable", "HyperLEDA was not found."
+            )
+            return
+
+        suggested = source.with_name(source.stem + "-Annotated.png")
+        selected, _ = QFileDialog.getSaveFileName(
+            self, "Save Annotated Image", str(suggested),
+            "PNG images (*.png)",
+        )
+        if not selected:
+            return
+
+        output = Path(selected)
+        if output.suffix.lower() != ".png":
+            output = output.with_suffix(".png")
+
+        if output.resolve() == source.resolve():
+            QMessageBox.warning(
+                self, "Original protected",
+                "The original photograph cannot be overwritten.",
+            )
+            return
+
+        if output.exists():
+            QMessageBox.warning(
+                self, "File already exists",
+                "Please choose another filename.",
+            )
+            return
+
+        self.annotate_button.setEnabled(False)
+        self.annotate_button.setText("Annotating…")
+        self._append_solver_log(f"Annotation started: {source.name}")
+
+        thread = QThread(self)
+        worker = AnnotationWorker(source, wcs, catalogue, output)
+        self.annotation_thread = thread
+        self.annotation_worker = worker
+
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._annotation_progress)
+        worker.succeeded.connect(self._annotation_succeeded)
+        worker.failed.connect(self._annotation_failed)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._annotation_finished)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    @Slot(str)
+    def _annotation_progress(self, message: str) -> None:
+        self._append_solver_log(f"Annotation: {message}")
+
+    @Slot(int, str)
+    def _annotation_succeeded(self, count: int, output_path: str) -> None:
+        self._append_solver_log(
+            f"Annotation complete: {count} galaxies — {output_path}"
+        )
+        QMessageBox.information(
+            self, "Annotation complete",
+            f"Annotated {count} galaxies.\\n\\nSaved to:\\n{output_path}",
+        )
+
+    @Slot(str)
+    def _annotation_failed(self, message: str) -> None:
+        self._append_solver_log(f"Annotation failed: {message}")
+        QMessageBox.warning(self, "Annotation failed", message)
+
+    @Slot()
+    def _annotation_finished(self) -> None:
+        self.annotation_thread = None
+        self.annotation_worker = None
+        self.annotate_button.setText("Annotate Image…")
+        self.annotate_button.setEnabled(
+            bool(
+                self.current_image_path
+                and self.current_solution is not None
+                and self.solve_cache.wcs_path_for(
+                    self.current_image_path
+                ).is_file()
+            )
+        )
 
     def cancel_solve(self) -> None:
         if self.solve_worker is None or not self.solve_in_progress:
@@ -6313,6 +6445,16 @@ class MainWindow(QMainWindow):
         self._show_estimated_status()
 
     def closeEvent(self, event) -> None:
+        annotation_thread = getattr(self, "annotation_thread", None)
+        if annotation_thread is not None:
+            QMessageBox.information(
+                self,
+                "Annotation in progress",
+                "Please wait for image annotation to finish before closing AstroFrame.",
+            )
+            event.ignore()
+            return
+
         self.settings.setValue("geometry", self.saveGeometry())
         if self.current_solution is None and self.width_spin.value() > 0:
             self.settings.setValue("referenceWidthEstimate", self.width_spin.value())
@@ -6389,14 +6531,37 @@ class MainWindow(QMainWindow):
     def _solve_succeeded_for_request(
         self, solution: PlateSolution, request_id: int, image_path: str
     ) -> None:
+        temp_wcs = self._wcs_temp_paths.pop(request_id, None)
         if not self._request_is_current(request_id, image_path):
+            if temp_wcs is not None:
+                temp_wcs.unlink(missing_ok=True)
             return
+
+        # Promote only this accepted request's WCS to the image cache.
+        if temp_wcs is not None:
+            try:
+                if temp_wcs.is_file():
+                    cached_wcs = self.solve_cache.wcs_path_for(image_path)
+                    cached_wcs.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(temp_wcs, cached_wcs)
+                    self._append_solver_log(
+                        "AstroFrame: ASTAP WCS saved alongside the image-fingerprint cache."
+                    )
+                temp_wcs.unlink(missing_ok=True)
+            except OSError as exc:
+                self._append_solver_log(
+                    f"AstroFrame: could not cache WCS sidecar: {exc}"
+                )
+
         self._solve_succeeded(solution)
 
     @Slot(str, int, str)
     def _solve_failed_for_request(
         self, message: str, request_id: int, image_path: str
     ) -> None:
+        temp_wcs = self._wcs_temp_paths.pop(request_id, None)
+        if temp_wcs is not None:
+            temp_wcs.unlink(missing_ok=True)
         if not self._request_is_current(request_id, image_path):
             return
         self._solve_failed(message)
@@ -6405,8 +6570,12 @@ class MainWindow(QMainWindow):
     def _solve_cancelled_for_request(
         self, request_id: int, image_path: str
     ) -> None:
+        temp_wcs = self._wcs_temp_paths.pop(request_id, None)
+        if temp_wcs is not None:
+            temp_wcs.unlink(missing_ok=True)
         if not self._request_is_current(request_id, image_path):
             return
+
         self.solve_in_progress = False
         self.current_solution = None
         self.solve_details.clear()
@@ -7246,6 +7415,15 @@ class MainWindow(QMainWindow):
         self.current_solution = solution
         self.online_fallback_button.hide()
 
+        # Full WCS is required for accurate galaxy annotations.
+        has_wcs = bool(
+            self.current_image_path
+            and self.solve_cache.wcs_path_for(self.current_image_path).is_file()
+        )
+        self.annotate_button.setEnabled(
+            has_wcs and getattr(self, "annotation_thread", None) is None
+        )
+
         # RC22x: a rig may already be checked before the image becomes solved.
         # Once accurate astrometry exists, establish an active framing rig
         # automatically so its visible frame is immediately draggable.
@@ -7536,6 +7714,23 @@ class MainWindow(QMainWindow):
     def _solve_finished_for(
         self, thread: QThread, worker: PlateSolveWorker
     ) -> None:
+        # Clean up any WCS left by this worker, including retired solves.
+        # This runs after the worker thread has finished.
+        temp_wcs = getattr(worker, "wcs_output_path", None)
+        if temp_wcs is not None:
+            temp_wcs = Path(temp_wcs)
+            self._wcs_temp_paths = {
+                request_id: path
+                for request_id, path in self._wcs_temp_paths.items()
+                if path != temp_wcs
+            }
+            try:
+                temp_wcs.unlink(missing_ok=True)
+            except OSError as exc:
+                self._append_solver_log(
+                    f"AstroFrame: could not remove temporary WCS: {exc}"
+                )
+
         # Retired jobs are allowed to wind down quietly after immediate UI
         # cancellation.  Never let an old thread clear a newer active solve.
         self._retired_solve_jobs = [
