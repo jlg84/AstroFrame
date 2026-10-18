@@ -5627,8 +5627,46 @@ class MainWindow(QMainWindow):
             )
             return
 
+
+        options_dialog = QDialog(self)
+        options_dialog.setWindowTitle("Annotate Image")
+        options_layout = QVBoxLayout(options_dialog)
+        galaxies_check = QCheckBox("Galaxies")
+        galaxies_check.setChecked(True)
+        options_layout.addWidget(galaxies_check)
+        grid_check = QCheckBox("RA/Dec coordinate grid")
+        options_layout.addWidget(grid_check)
+        for category in (
+            "Emission / reflection nebulae",
+            "Planetary nebulae",
+            "Open clusters",
+            "Globular clusters",
+            "Dark nebulae",
+            "Bright stars",
+        ):
+            checkbox = QCheckBox(category + " (coming soon)")
+            checkbox.setEnabled(False)
+            options_layout.addWidget(checkbox)
+
+        options_buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        options_buttons.accepted.connect(options_dialog.accept)
+        options_buttons.rejected.connect(options_dialog.reject)
+        options_layout.addWidget(options_buttons)
+        ok_button = options_buttons.button(QDialogButtonBox.StandardButton.Ok)
+        def update_annotation_ok():
+            ok_button.setEnabled(galaxies_check.isChecked() or grid_check.isChecked())
+        galaxies_check.toggled.connect(update_annotation_ok)
+        grid_check.toggled.connect(update_annotation_ok)
+        update_annotation_ok()
+        if options_dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+
         catalogue = find_galaxy_catalogue()
-        if catalogue is None:
+        if galaxies_check.isChecked() and catalogue is None:
             QMessageBox.warning(
                 self, "Catalogue unavailable", "HyperLEDA was not found."
             )
@@ -5653,19 +5691,15 @@ class MainWindow(QMainWindow):
             )
             return
 
-        if output.exists():
-            QMessageBox.warning(
-                self, "File already exists",
-                "Please choose another filename.",
-            )
-            return
+
+        self.annotation_grid_only = grid_check.isChecked() and not galaxies_check.isChecked()
 
         self.annotate_button.setEnabled(False)
         self.annotate_button.setText("Annotating…")
         self._append_solver_log(f"Annotation started: {source.name}")
 
         thread = QThread(self)
-        worker = AnnotationWorker(source, wcs, catalogue, output)
+        worker = AnnotationWorker(source, wcs, catalogue, output, include_galaxies=galaxies_check.isChecked(), include_grid=grid_check.isChecked())
         self.annotation_thread = thread
         self.annotation_worker = worker
 
@@ -5693,7 +5727,7 @@ class MainWindow(QMainWindow):
         dialog = QMessageBox(self)
         dialog.setWindowTitle("Annotation complete")
         dialog.setIcon(QMessageBox.Icon.Information)
-        dialog.setText(f"Annotated {count} galaxies.")
+        dialog.setText("Coordinate grid added." if count == 0 and getattr(self, "annotation_grid_only", False) else f"Annotated {count} galaxies.")
         dialog.setInformativeText(f"Saved to:\\n{output_path}")
 
         open_button = dialog.addButton(
