@@ -10,3 +10,12 @@ Astronomy.Tools equipment data is used with permission and requires credit.
 - AstroGuide metadata package: https://github.com/tophrchris/astroguide-metadata
 
 The bundled catalogue is stored in `data/equipment_catalog_v1.json`. Individual records retain their source attribution and source URL where supplied by the metadata package.
+
+## Deep-sky object annotations
+
+AstroFrame uses the OpenNGC catalogue to identify and annotate deep-sky objects on plate-solved images.
+
+- OpenNGC catalogue: https://github.com/mattiaverga/OpenNGC
+- OpenNGC licence: Creative Commons Attribution-ShareAlike 4.0 International (CC BY-SA 4.0).
+
+OpenNGC data is used under the terms of its licence. Consult the OpenNGC repository for the project's attribution details and licence terms.

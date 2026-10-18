@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QPointF, Qt, QRectF
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
 
 
@@ -76,15 +77,61 @@ def render_annotated_image(
                     annotation.major_radius_px * math.cos(angle),
                     annotation.minor_radius_px * math.sin(angle),
                 )
+                left_extent = right_extent
                 label_x = annotation.x + right_extent + 12 * scale
             else:
                 # Retain the original marker for objects without dimensions.
                 radius = 12.0 * scale
                 painter.drawEllipse(centre, radius, radius)
+                left_extent = radius
                 label_x = annotation.x + radius + 6 * scale
 
+            # Prefer a label outside the ellipse, but avoid pushing it
+            # against the image edge when a large object fills the frame.
+            metrics = painter.fontMetrics()
+            label_width = metrics.horizontalAdvance(annotation.name)
+            margin = 12 * scale
+            gap = 12 * scale
+
+            right_x = annotation.x + right_extent + gap
+            left_x = annotation.x - left_extent - label_width - gap
+
+            if right_x + label_width <= image.width() - margin:
+                label_x = right_x
+                label_y = annotation.y
+            elif left_x >= margin:
+                label_x = left_x
+                label_y = annotation.y
+            else:
+                # Large nebulae may fill the entire frame. In that case,
+                # place the label near the object rather than at an edge.
+                label_x = annotation.x + 14 * scale
+                label_y = annotation.y - 14 * scale
+
+            label_x = max(
+                margin,
+                min(label_x, image.width() - label_width - margin),
+            )
+            label_y = max(
+                metrics.ascent() + margin,
+                min(
+                    label_y,
+                    image.height() - metrics.descent() - margin,
+                ),
+            )
+
+            # A translucent dark backing keeps the label readable over
+            # bright emission and reflection nebulosity.
+            text_rect = QRectF(
+                label_x - 4 * scale,
+                label_y - metrics.ascent() - 3 * scale,
+                label_width + 8 * scale,
+                metrics.height() + 6 * scale,
+            )
+            painter.fillRect(text_rect, QColor(0, 0, 0, 180))
+            painter.setPen(QColor(colour))
             painter.drawText(
-                QPointF(label_x, annotation.y),
+                QPointF(label_x, label_y),
                 annotation.name,
             )
 
@@ -93,6 +140,27 @@ def render_annotated_image(
 
     if not image.save(str(output_path)):
         raise OSError(f"Cannot save annotated image: {output_path}")
+
+
+
+@lru_cache(maxsize=8)
+def _read_wcs_header_cached(
+    path_text: str, modified_ns: int, file_size: int
+) -> dict[str, str]:
+    """Read and parse a WCS header once per file version."""
+    data = Path(path_text).read_bytes()
+    header: dict[str, str] = {}
+
+    for offset in range(0, len(data), 80):
+        card = data[offset:offset + 80].decode("ascii", errors="replace")
+        key = card[:8].strip()
+        if key == "END":
+            break
+        if card[8:10] == "= ":
+            value = card[10:80].split("/")[0].strip()
+            header[key] = value.strip("' ")
+
+    return header
 
 
 def sky_to_pixel(
@@ -105,17 +173,11 @@ def sky_to_pixel(
     """Convert celestial coordinates to image pixels using ASTAP's TAN WCS."""
     import math
 
-    data = Path(wcs_path).read_bytes()
-    header = {}
-
-    for offset in range(0, len(data), 80):
-        card = data[offset:offset + 80].decode("ascii", errors="replace")
-        key = card[:8].strip()
-        if key == "END":
-            break
-        if card[8:10] == "= ":
-            value = card[10:80].split("/")[0].strip()
-            header[key] = value.strip("' ")
+    wcs_file = Path(wcs_path)
+    stat = wcs_file.stat()
+    header = _read_wcs_header_cached(
+        str(wcs_file.resolve()), stat.st_mtime_ns, stat.st_size
+    )
 
     def number(key: str) -> float:
         return float(header[key].replace("D", "E"))
@@ -314,6 +376,161 @@ def image_sky_coverage(
 
     # Small margin for catalogue objects close to the image boundary.
     return centre_ra, centre_dec, max_separation * 1.05
+
+
+
+def annotate_openngc_objects(
+    image_path: str | Path,
+    wcs_path: str | Path,
+    output_path: str | Path,
+    *,
+    mode: str,
+    min_major_arcmin: float = 0.5,
+    colour: str = "#83CBE8",
+    progress=None,
+) -> int:
+    """Annotate OpenNGC nebulae or star clusters on a plate-solved image."""
+    import csv
+    import requests
+    from astropy.coordinates import SkyCoord
+    import astropy.units as u
+
+    if mode not in {"nebulae", "clusters"}:
+        raise ValueError(f"Unsupported OpenNGC annotation mode: {mode}")
+
+    cache_dir = Path.home() / ".astroframe" / "reference_catalogs"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    catalogue_path = cache_dir / "openngc.csv"
+
+    if not catalogue_path.is_file():
+        if progress:
+            progress("Downloading OpenNGC catalogue…")
+        response = requests.get(
+            "https://raw.githubusercontent.com/mattiaverga/OpenNGC/master/database_files/NGC.csv",
+            timeout=60,
+        )
+        response.raise_for_status()
+        temporary_path = catalogue_path.with_suffix(".tmp")
+        temporary_path.write_bytes(response.content)
+        temporary_path.replace(catalogue_path)
+
+    if progress:
+        progress("Preparing image and WCS…")
+
+    width, height = image_dimensions(image_path)
+    centre_ra, centre_dec, radius = image_sky_coverage(
+        wcs_path, width, height
+    )
+
+    nebula_types = {"Neb", "HII", "EmN", "RfN", "Dn", "SNR", "PN", "Cl+N"}
+    cluster_types = {"OC", "Gb", "Cl", "Cl+N"}
+
+    if progress:
+        progress(f"Reading OpenNGC {mode} catalogue…")
+
+    annotations = []
+    image_centre = SkyCoord(
+        ra=centre_ra * u.deg,
+        dec=centre_dec * u.deg,
+        frame="icrs",
+    )
+
+    with catalogue_path.open("r", newline="", encoding="utf-8-sig") as handle:
+        reader = csv.DictReader(handle, delimiter=";")
+        for row in reader:
+            object_type = (row.get("Type") or "").strip()
+            if mode == "nebulae" and object_type not in nebula_types:
+                continue
+            if mode == "clusters" and object_type not in cluster_types:
+                continue
+
+            try:
+                coord = SkyCoord(
+                    row["RA"], row["Dec"],
+                    unit=(u.hourangle, u.deg), frame="icrs",
+                )
+                ra_deg = float(coord.ra.deg)
+                dec_deg = float(coord.dec.deg)
+                major = float(row.get("MajAx") or 0)
+                minor = float(row.get("MinAx") or major)
+                position_angle = float(row.get("PosAng") or 0)
+            except (ValueError, TypeError, KeyError):
+                continue
+
+            if major < min_major_arcmin or minor <= 0:
+                continue
+
+            # Reject objects well outside the image before doing the
+            # more expensive WCS-to-pixel ellipse calculations.
+            angular_distance = coord.separation(image_centre).deg
+            object_radius_deg = max(major, minor) / 120.0
+            if angular_distance > radius + object_radius_deg + 0.02:
+                continue
+
+            try:
+                x, y, major_px, minor_px, angle = galaxy_ellipse_pixels(
+                    wcs_path, ra_deg, dec_deg, major, minor,
+                    position_angle, image_height=height,
+                )
+            except (ValueError, KeyError, ZeroDivisionError):
+                continue
+
+            if not (0 <= x < width and 0 <= y < height):
+                continue
+
+            catalogue_name = (row.get("Name") or "").strip()
+            common_name = (row.get("Common names") or "").strip()
+            messier = (row.get("M") or "").strip()
+
+            # Format catalogue identifiers for readability.
+            for prefix in ("NGC", "IC"):
+                if catalogue_name.startswith(prefix):
+                    suffix = catalogue_name[len(prefix):]
+                    if suffix.isdigit():
+                        catalogue_name = f"{prefix} {suffix}"
+                    break
+
+            if messier:
+                messier_number = messier.upper().removeprefix("M").strip()
+                if messier_number.isdigit():
+                    messier = f"M{int(messier_number)}"
+                else:
+                    messier = f"M{messier_number}"
+                if common_name:
+                    name = f"{messier} — {common_name}"
+                    if catalogue_name:
+                        name += f" ({catalogue_name})"
+                else:
+                    name = f"{messier} ({catalogue_name})" if catalogue_name else messier
+            elif common_name and catalogue_name:
+                name = f"{common_name} ({catalogue_name})"
+            else:
+                name = common_name or catalogue_name
+
+            if not name:
+                continue
+
+            annotations.append(
+                Annotation(
+                    name=name,
+                    x=x,
+                    y=y,
+                    major_arcmin=major,
+                    minor_arcmin=minor,
+                    position_angle_deg=position_angle,
+                    major_radius_px=major_px,
+                    minor_radius_px=minor_px,
+                    image_angle_deg=angle,
+                )
+            )
+
+    if progress:
+        progress(f"Rendering {len(annotations)} OpenNGC annotations…")
+
+    render_annotated_image(
+        image_path, annotations, output_path, colour=colour
+    )
+    return len(annotations)
 
 
 def annotate_galaxies(
