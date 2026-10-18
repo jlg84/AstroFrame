@@ -8,6 +8,8 @@ import json
 import math
 import re
 import shutil
+import subprocess
+import sys
 import tempfile
 from uuid import uuid4
 import textwrap
@@ -5687,10 +5689,31 @@ class MainWindow(QMainWindow):
         self._append_solver_log(
             f"Annotation complete: {count} galaxies — {output_path}"
         )
-        QMessageBox.information(
-            self, "Annotation complete",
-            f"Annotated {count} galaxies.\\n\\nSaved to:\\n{output_path}",
+
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Annotation complete")
+        dialog.setIcon(QMessageBox.Icon.Information)
+        dialog.setText(f"Annotated {count} galaxies.")
+        dialog.setInformativeText(f"Saved to:\\n{output_path}")
+
+        open_button = dialog.addButton(
+            "Open Folder", QMessageBox.ButtonRole.ActionRole
         )
+        dialog.addButton(QMessageBox.StandardButton.Ok)
+        dialog.exec()
+
+        if dialog.clickedButton() == open_button:
+            try:
+                if sys.platform == "darwin":
+                    subprocess.Popen(["open", "-R", output_path])
+                elif sys.platform == "win32":
+                    subprocess.Popen(["explorer", "/select,", str(Path(output_path))])
+                else:
+                    subprocess.Popen(["xdg-open", str(Path(output_path).parent)])
+            except OSError as exc:
+                QMessageBox.warning(
+                    self, "Cannot open folder", str(exc)
+                )
 
     @Slot(str)
     def _annotation_failed(self, message: str) -> None:
