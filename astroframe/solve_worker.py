@@ -13,6 +13,58 @@ from .plate_solve import (
 )
 
 
+class WcsRecoveryWorker(QObject):
+    succeeded = Signal(object)
+    failed = Signal(str)
+    finished = Signal()
+
+    def __init__(self, job_id: int, expected_size: tuple[int, int], expected_scale: float, expected_ra: float, expected_dec: float):
+        super().__init__()
+        self.job_id = int(job_id)
+        self.expected_size = expected_size
+        self.expected_scale = float(expected_scale)
+        self.expected_ra = float(expected_ra)
+        self.expected_dec = float(expected_dec)
+
+    @Slot()
+    def run(self):
+        import io
+        import math
+        import requests
+        from astropy.io import fits
+        from astropy.wcs import WCS
+        from astropy.wcs.utils import proj_plane_pixel_scales
+
+        try:
+            response = requests.get(
+                f"https://nova.astrometry.net/wcs_file/{self.job_id}",
+                timeout=25,
+            )
+            response.raise_for_status()
+            data = response.content
+            header = fits.getheader(io.BytesIO(data))
+            wcs = WCS(header).celestial
+            scales = proj_plane_pixel_scales(wcs) * 3600.0
+            scale = float(sum(scales) / len(scales))
+            width, height = self.expected_size
+            if not math.isfinite(scale) or self.expected_scale <= 0:
+                raise ValueError("Invalid WCS pixel scale")
+            if abs(scale / self.expected_scale - 1) > 0.02:
+                raise ValueError("Recovered WCS scale differs from cached solution")
+            ra, dec = wcs.pixel_to_world_values((width - 1) / 2, (height - 1) / 2)
+            if not math.isfinite(ra) or not math.isfinite(dec):
+                raise ValueError("Invalid recovered WCS centre")
+            ra_delta = (float(ra) - self.expected_ra + 180) % 360 - 180
+            separation = math.hypot(ra_delta * math.cos(math.radians(self.expected_dec)), float(dec) - self.expected_dec)
+            if separation > 0.02:
+                raise ValueError("Recovered WCS centre differs from cached solution")
+            self.succeeded.emit(data)
+        except Exception as exc:
+            self.failed.emit(str(exc))
+        finally:
+            self.finished.emit()
+
+
 class PlateSolveWorker(QObject):
     progress = Signal(str)
     log = Signal(str)
@@ -221,6 +273,7 @@ class PlateSolveWorker(QObject):
                 image_height_px=self.image_height_px,
                 progress=self.progress.emit,
                 cancelled=self._is_cancelled,
+                wcs_output_path=self.wcs_output_path,
             )
 
         self.log.emit("Astrometry.net: logging in and uploading image")
@@ -231,6 +284,7 @@ class PlateSolveWorker(QObject):
             estimated_width_deg=self.estimated_width_deg,
             progress=self.progress.emit,
             cancelled=self._is_cancelled,
+            wcs_output_path=self.wcs_output_path,
         )
 
     @Slot()

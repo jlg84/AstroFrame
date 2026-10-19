@@ -190,7 +190,8 @@ def render_coordinate_grid(
         raise ValueError(f"Cannot open image: {image_path}")
 
     image = image.convertToFormat(QImage.Format.Format_ARGB32)
-    border = max(30, round(image.width() * 0.02))
+    # Allow enough room for full coordinate labels on every edge.
+    border = max(48, round(image.width() * 0.035))
 
     canvas = QImage(
         image.width() + 2 * border,
@@ -232,27 +233,56 @@ def render_coordinate_grid(
         font.setPixelSize(max(14, round(border * 0.40)))
         painter.setFont(font)
 
+        # Track occupied label rectangles to prevent overlapping text.
+        occupied_labels = []
+
         for axis, value, path in paths:
             label = format_grid_coordinate(axis, value)
+            metrics = painter.fontMetrics()
+            label_width = metrics.horizontalAdvance(label) + 12
+            label_height = metrics.height() + 6
             crossings = grid_edge_intersections(
                 path, image.width(), image.height()
             )
             for edge, x, y in crossings:
                 if edge in ("top", "bottom"):
                     tx = border + x
-                    ty = border // 2 if edge == "top" else border + image.height() + border // 2
-                    painter.drawText(
-                        int(tx - 40), int(ty - 10), 80, 20,
-                        0x84, label
-                    )
-
+                    ty = border / 2 if edge == "top" else border + image.height() + border / 2
+                    rect = (tx - label_width / 2, ty - label_height / 2,
+                            label_width, label_height)
                 elif edge in ("left", "right"):
-                    tx = border // 2 if edge == "left" else border + image.width() + border // 2
+                    tx = border / 2 if edge == "left" else border + image.width() + border / 2
                     ty = border + y
+                    rect = (tx - label_height / 2, ty - label_width / 2,
+                            label_height, label_width)
+                else:
+                    continue
+
+                rx, ry, rw, rh = rect
+                if rx < 0 or ry < 0 or rx + rw > canvas.width() or ry + rh > canvas.height():
+                    continue
+
+                gap = max(6, round(font.pixelSize() * 0.35))
+                if any(
+                    rx < ox + ow + gap and rx + rw + gap > ox
+                    and ry < oy + oh + gap and ry + rh + gap > oy
+                    for ox, oy, ow, oh in occupied_labels
+                ):
+                    continue
+
+                occupied_labels.append(rect)
+                if edge in ("top", "bottom"):
+                    painter.drawText(
+                        int(rx), int(ry), label_width, label_height, 0x84, label
+                    )
+                else:
                     painter.save()
                     painter.translate(tx, ty)
                     painter.rotate(-90)
-                    painter.drawText(-40, -10, 80, 20, 0x84, label)
+                    painter.drawText(
+                        -label_width // 2, -label_height // 2,
+                        label_width, label_height, 0x84, label
+                    )
                     painter.restore()
 
     finally:

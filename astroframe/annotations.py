@@ -6,6 +6,9 @@ from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 
+from astropy.io import fits
+from astropy.wcs import WCS
+
 from PySide6.QtCore import QPointF, Qt, QRectF
 from PySide6.QtGui import QColor, QFont, QImage, QPainter, QPainterPath, QPen
 
@@ -144,6 +147,28 @@ def render_annotated_image(
 
 
 @lru_cache(maxsize=8)
+def _load_astropy_wcs(path_text: str, modified_ns: int, file_size: int) -> WCS:
+    """Load either a FITS WCS or an ASTAP header-only WCS."""
+    path = Path(path_text)
+    with path.open("rb") as handle:
+        first_card = handle.read(80)
+    if first_card.startswith(b"SIMPLE  ="):
+        with fits.open(path) as hdul:
+            header = hdul[0].header.copy()
+    else:
+        data = path.read_bytes()
+        end = next(
+            (i + 80 for i in range(0, len(data), 80)
+             if data[i:i + 8].strip() == b"END"),
+            len(data),
+        )
+        header = fits.Header.fromstring(
+            data[:end].decode("ascii"), sep=""
+        )
+    return WCS(header).celestial
+
+
+@lru_cache(maxsize=8)
 def _read_wcs_header_cached(
     path_text: str, modified_ns: int, file_size: int
 ) -> dict[str, str]:
@@ -170,56 +195,12 @@ def sky_to_pixel(
     *,
     image_height: int,
 ) -> tuple[float, float]:
-    """Convert celestial coordinates to image pixels using ASTAP's TAN WCS."""
-    import math
-
-    wcs_file = Path(wcs_path)
-    stat = wcs_file.stat()
-    header = _read_wcs_header_cached(
-        str(wcs_file.resolve()), stat.st_mtime_ns, stat.st_size
-    )
-
-    def number(key: str) -> float:
-        return float(header[key].replace("D", "E"))
-
-    ra0 = math.radians(number("CRVAL1"))
-    dec0 = math.radians(number("CRVAL2"))
-    ra = math.radians(ra_deg)
-    dec = math.radians(dec_deg)
-
-    delta_ra = (ra - ra0 + math.pi) % (2 * math.pi) - math.pi
-    denominator = (
-        math.sin(dec) * math.sin(dec0)
-        + math.cos(dec) * math.cos(dec0) * math.cos(delta_ra)
-    )
-    if denominator <= 0:
-        raise ValueError("Object lies outside the TAN projection hemisphere")
-
-    xi = math.cos(dec) * math.sin(delta_ra) / denominator
-    eta = (
-        math.sin(dec) * math.cos(dec0)
-        - math.cos(dec) * math.sin(dec0) * math.cos(delta_ra)
-    ) / denominator
-
-    xi = math.degrees(xi)
-    eta = math.degrees(eta)
-
-    a, b = number("CD1_1"), number("CD1_2")
-    c, d = number("CD2_1"), number("CD2_2")
-    determinant = a * d - b * c
-    if abs(determinant) < 1e-20:
-        raise ValueError("Singular WCS transformation matrix")
-
-    dx = (d * xi - b * eta) / determinant
-    dy = (-c * xi + a * eta) / determinant
-
-    # FITS uses one-based pixel coordinates and a bottom-left origin.
-    x = number("CRPIX1") + dx - 1
-    fits_y = number("CRPIX2") + dy - 1
-
-    y = image_height - 1 - fits_y
-
-    return x, y
+    """Convert celestial coordinates to top-left-origin image pixels."""
+    path = Path(wcs_path).resolve()
+    stat = path.stat()
+    wcs = _load_astropy_wcs(str(path), stat.st_mtime_ns, stat.st_size)
+    x, fits_y = wcs.all_world2pix([[ra_deg, dec_deg]], 0)[0]
+    return float(x), float(image_height - 1 - fits_y)
 
 
 def galaxy_ellipse_pixels(
@@ -287,44 +268,13 @@ def pixel_to_sky(
     *,
     image_height: int,
 ) -> tuple[float, float]:
-    """Convert image pixel coordinates to RA/Dec using ASTAP's TAN WCS."""
-    import math
-
-    data = Path(wcs_path).read_bytes()
-    header = {}
-
-    for offset in range(0, len(data), 80):
-        card = data[offset:offset + 80].decode("ascii", errors="replace")
-        key = card[:8].strip()
-        if key == "END":
-            break
-        if card[8:10] == "= ":
-            header[key] = card[10:80].split("/")[0].strip().strip("' ")
-
-    def number(key: str) -> float:
-        return float(header[key].replace("D", "E"))
-
-    dx = x + 1 - number("CRPIX1")
+    """Convert top-left-origin image pixels to celestial coordinates."""
+    path = Path(wcs_path).resolve()
+    stat = path.stat()
+    wcs = _load_astropy_wcs(str(path), stat.st_mtime_ns, stat.st_size)
     fits_y = image_height - 1 - y
-    dy = fits_y + 1 - number("CRPIX2")
-
-    xi_deg = number("CD1_1") * dx + number("CD1_2") * dy
-    eta_deg = number("CD2_1") * dx + number("CD2_2") * dy
-
-    xi = math.radians(xi_deg)
-    eta = math.radians(eta_deg)
-    ra0 = math.radians(number("CRVAL1"))
-    dec0 = math.radians(number("CRVAL2"))
-
-    denominator = math.cos(dec0) - eta * math.sin(dec0)
-
-    ra = ra0 + math.atan2(xi, denominator)
-    dec = math.atan2(
-        math.sin(dec0) + eta * math.cos(dec0),
-        math.hypot(denominator, xi),
-    )
-
-    return math.degrees(ra) % 360.0, math.degrees(dec)
+    ra, dec = wcs.all_pix2world([[x, fits_y]], 0)[0]
+    return float(ra) % 360.0, float(dec)
 
 
 def image_sky_coverage(

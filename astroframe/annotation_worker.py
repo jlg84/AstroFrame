@@ -26,6 +26,7 @@ class AnnotationWorker(QObject):
         include_grid: bool = False,
         include_nebulae: bool = False,
         include_clusters: bool = False,
+        output_max_edge: int = 0,
     ) -> None:
         super().__init__()
         self.image_path = Path(image_path)
@@ -36,6 +37,7 @@ class AnnotationWorker(QObject):
         self.include_grid = include_grid
         self.include_nebulae = include_nebulae
         self.include_clusters = include_clusters
+        self.output_max_edge = int(output_max_edge)
 
     @Slot()
     def run(self) -> None:
@@ -118,6 +120,27 @@ class AnnotationWorker(QObject):
                     elif working_image != self.image_path:
                         import shutil
                         shutil.copy2(working_image, self.output_path)
+
+            # Export the final opaque annotation as RGB PNG, without alpha.
+            if self.output_path.suffix.lower() == ".png":
+                from PySide6.QtGui import QImage
+                final_image = QImage(str(self.output_path))
+                if final_image.isNull():
+                    raise OSError("Could not read completed annotated PNG")
+                if self.output_max_edge > 0:
+                    from PySide6.QtCore import Qt
+                    long_edge = max(final_image.width(), final_image.height())
+                    if long_edge > self.output_max_edge:
+                        self.progress.emit("Resizing annotated image…")
+                        final_image = final_image.scaled(
+                            self.output_max_edge,
+                            self.output_max_edge,
+                            Qt.AspectRatioMode.KeepAspectRatio,
+                            Qt.TransformationMode.SmoothTransformation,
+                        )
+                rgb = final_image.convertToFormat(QImage.Format.Format_RGB888)
+                if not rgb.save(str(self.output_path), "PNG"):
+                    raise OSError("Could not save RGB annotated PNG")
 
             self.succeeded.emit(count, str(self.output_path))
         except Exception as exc:

@@ -63,7 +63,7 @@ from .plate_solve import (
     PlateSolution,
     SolveCache,
 )
-from .solve_worker import PlateSolveWorker
+from .solve_worker import PlateSolveWorker, WcsRecoveryWorker
 from .annotation_worker import AnnotationWorker
 from .galaxy_catalogue import find_galaxy_catalogue
 from .astrobin_import import AstroBinImportWorker
@@ -308,6 +308,7 @@ class MainWindow(QMainWindow):
     solve_cancelled_ui = Signal(int, str)
     solve_log_ui = Signal(str, int, str)
     general_log_ui = Signal(str)
+    wcs_recovered_ui = Signal(object, str, object, str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -318,6 +319,10 @@ class MainWindow(QMainWindow):
         self.current_image_path: str | None = None
         self.current_image_size = (0, 0)
         self.current_solution: PlateSolution | None = None
+        self.wcs_recovery_thread = None
+        self.wcs_recovery_worker = None
+        self._wcs_recovery_image_hash = None
+        self._wcs_recovery_attempted_hashes = set()
         self._advisor_refresh_pending = False
         # The recommendation currently being composed on the image.  Once an
         # alternative is chosen, dragging its rig frame or changing its rotation
@@ -359,6 +364,10 @@ class MainWindow(QMainWindow):
         )
         self.solve_success_ui.connect(
             self._solve_succeeded_for_request,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self.wcs_recovered_ui.connect(
+            self._wcs_recovered_for_image,
             Qt.ConnectionType.QueuedConnection,
         )
         self.solve_failure_ui.connect(
@@ -5643,6 +5652,18 @@ class MainWindow(QMainWindow):
         cluster_check = QCheckBox("Star clusters (Bica catalogue)")
         options_layout.addWidget(cluster_check)
 
+        # Output resolution for the finished annotated image.
+        output_size_label = QLabel("Output image size")
+        options_layout.addWidget(output_size_label)
+        output_size_combo = QComboBox()
+        output_size_combo.addItem("Full resolution (original size)", 0)
+        output_size_combo.addItem("Large (2400 px)", 2400)
+        output_size_combo.addItem("Web / Email (1600 px)", 1600)
+        saved_size = int(self.settings.value("annotationOutputSize", 2400))
+        saved_index = output_size_combo.findData(saved_size)
+        output_size_combo.setCurrentIndex(max(0, saved_index))
+        options_layout.addWidget(output_size_combo)
+
         for category in (
             "Planetary nebulae",
             "Open clusters",
@@ -5706,6 +5727,9 @@ class MainWindow(QMainWindow):
             return
 
 
+        output_max_edge = int(output_size_combo.currentData())
+        self.settings.setValue("annotationOutputSize", output_max_edge)
+
         self.annotation_grid_only = (
             grid_check.isChecked()
             and not galaxies_check.isChecked()
@@ -5730,6 +5754,7 @@ class MainWindow(QMainWindow):
             include_grid=grid_check.isChecked(),
             include_nebulae=nebula_check.isChecked(),
             include_clusters=cluster_check.isChecked(),
+            output_max_edge=output_max_edge,
         )
         self.annotation_thread = thread
         self.annotation_worker = worker
@@ -6538,6 +6563,16 @@ class MainWindow(QMainWindow):
         self._show_estimated_status()
 
     def closeEvent(self, event) -> None:
+        recovery_thread = getattr(self, "wcs_recovery_thread", None)
+        if recovery_thread is not None and recovery_thread.isRunning():
+            QMessageBox.information(
+                self,
+                "WCS recovery in progress",
+                "Please wait for WCS recovery to finish before closing AstroFrame.",
+            )
+            event.ignore()
+            return
+
         annotation_thread = getattr(self, "annotation_thread", None)
         if annotation_thread is not None:
             QMessageBox.information(
@@ -6583,6 +6618,7 @@ class MainWindow(QMainWindow):
                     status="success",
                 )
             self._apply_solution(cached, cached=True)
+            self._start_wcs_recovery(path, cached)
         else:
             self.solve_in_progress = False
             self.current_solution = None
@@ -6597,6 +6633,87 @@ class MainWindow(QMainWindow):
             self.solve_details.clear()
             self.solve_details.hide()
             self._show_estimated_status()
+
+    @Slot(object, str, object, str)
+    def _wcs_recovered_for_image(self, data: bytes, image_path: str, solution: PlateSolution, original_hash: str) -> None:
+        if self.current_image_path != image_path or self.current_solution != solution:
+            return
+        if self.current_image_size[0] <= 0 or self.current_image_size[1] <= 0:
+            return
+        try:
+            if self.solve_cache.image_hash(image_path) != original_hash:
+                self._append_solver_log("WCS recovery discarded: image contents changed.")
+                return
+            import os
+            import tempfile
+            destination = self.solve_cache.wcs_path_for(image_path)
+            if destination.is_file():
+                return
+            fd, temporary = tempfile.mkstemp(prefix="wcs-", suffix=".tmp", dir=destination.parent)
+            try:
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(data)
+                os.replace(temporary, destination)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+            self.annotate_button.setEnabled(
+                getattr(self, "annotation_thread", None) is None
+            )
+            self._append_solver_log("Astrometry.net: missing WCS recovered from existing job; no new solve required.")
+        except Exception as exc:
+            self._append_solver_log(f"WCS recovery could not be saved: {exc}")
+
+    def _start_wcs_recovery(self, image_path: str, solution: PlateSolution) -> None:
+        if self.wcs_recovery_thread is not None:
+            return
+        if solution.solver != "Astrometry.net" or solution.job_id is None:
+            return
+        if self.solve_cache.wcs_path_for(image_path).is_file():
+            return
+        image_hash = self.solve_cache.image_hash(image_path)
+        if image_hash in self._wcs_recovery_attempted_hashes:
+            return
+        self._wcs_recovery_attempted_hashes.add(image_hash)
+        self._wcs_recovery_image_hash = image_hash
+        thread = QThread(self)
+        worker = WcsRecoveryWorker(
+            solution.job_id,
+            self.current_image_size,
+            solution.pixel_scale_arcsec,
+            solution.ra_deg,
+            solution.dec_deg,
+        )
+        self.wcs_recovery_thread = thread
+        self.wcs_recovery_worker = worker
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(
+            lambda data, path=image_path, sol=solution, digest=image_hash:
+                self.wcs_recovered_ui.emit(data, path, sol, digest)
+        )
+        worker.failed.connect(
+            lambda message: self.general_log_ui.emit(
+                f"Astrometry.net WCS recovery unavailable: {message}"
+            )
+        )
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(
+            lambda t=thread: self._wcs_recovery_finished(t)
+        )
+        self._append_solver_log("Astrometry.net: retrieving missing WCS from existing job...")
+        thread.start()
+
+    def _wcs_recovery_finished(self, thread: QThread) -> None:
+        if self.wcs_recovery_thread is thread:
+            self.wcs_recovery_thread = None
+            self.wcs_recovery_worker = None
+            image_path = self.current_image_path
+            solution = self.current_solution
+            if image_path and solution is not None:
+                self._start_wcs_recovery(image_path, solution)
 
     def _show_estimated_status(self) -> None:
         self.solve_status.setObjectName("estimatedStatus")

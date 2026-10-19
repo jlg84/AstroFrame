@@ -1270,6 +1270,7 @@ class AstrometryNetClient:
         image_height_px: int,
         solve_mode: str,
         solve_seconds: float | None = None,
+        wcs_output_path: str | Path | None = None,
     ) -> PlateSolution:
         """Build a PlateSolution from Astrometry.net's actual WCS product."""
         url = f"{NOVA_ROOT}/wcs_file/{int(job_id)}"
@@ -1281,7 +1282,6 @@ class AstrometryNetClient:
         with tempfile.NamedTemporaryFile(suffix=".wcs", delete=False) as handle:
             handle.write(response.content)
             wcs_path = Path(handle.name)
-
         try:
             # Astrometry.net's wcs_file is a FITS file, not ASTAP's text
             # sidecar.  Read the primary header directly.
@@ -1323,6 +1323,11 @@ class AstrometryNetClient:
                 f"orientation {orientation:.6f} deg; parity {parity:+.0f}."
             )
 
+            if wcs_output_path is not None:
+                destination = Path(wcs_output_path)
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(wcs_path, destination)
+
             return PlateSolution(
                 ra_deg=float(ra_deg) % 360.0,
                 dec_deg=float(dec_deg),
@@ -1351,6 +1356,7 @@ class AstrometryNetClient:
         image_height_px: int,
         progress: Callable[[str], None] | None = None,
         cancelled: Callable[[], bool] | None = None,
+        wcs_output_path: str | Path | None = None,
     ) -> PlateSolution:
         """Retrieve a public Astrometry.net job without re-uploading."""
         job_id = int(job_id)
@@ -1381,6 +1387,7 @@ class AstrometryNetClient:
                 image_width_px=image_width_px,
                 image_height_px=image_height_px,
                 solve_mode="Online existing job",
+                wcs_output_path=wcs_output_path,
             )
         except Exception as exc:
             self._say(
@@ -1429,6 +1436,7 @@ class AstrometryNetClient:
         image_width_px: int,
         image_height_px: int,
         estimated_width_deg: float | None = None,
+        wcs_output_path: str | Path | None = None,
         progress: Callable[[str], None] | None = None,
         cancelled: Callable[[], bool] | None = None,
     ) -> PlateSolution:
@@ -1575,6 +1583,7 @@ class AstrometryNetClient:
                     image_height_px=image_height_px,
                     solve_mode="Online blind",
                     solve_seconds=time.monotonic() - started,
+                    wcs_output_path=wcs_output_path,
                 )
             except Exception as exc:
                 self._say(
