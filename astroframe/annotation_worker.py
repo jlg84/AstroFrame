@@ -44,6 +44,7 @@ class AnnotationWorker(QObject):
         star_magnitude_limit: float = 6.0,
         output_max_edge: int = 0,
         annotation_style: str = "automatic",
+        show_outlines: bool = True,
         primary_subject: dict | None = None,
     ) -> None:
         super().__init__()
@@ -64,6 +65,7 @@ class AnnotationWorker(QObject):
         self.star_magnitude_limit = float(star_magnitude_limit)
         self.output_max_edge = int(output_max_edge)
         self.annotation_style = annotation_style
+        self.show_outlines = show_outlines
         self.primary_subject = primary_subject
 
     @Slot()
@@ -158,6 +160,7 @@ class AnnotationWorker(QObject):
                         render_annotated_image(
                             self.image_path, annotations, annotated_path,
                             annotation_style=self.annotation_style,
+                            show_outlines=self.show_outlines,
                         )
                         self.progress.emit("Adding coordinate grid…")
                         render_coordinate_grid(
@@ -167,6 +170,7 @@ class AnnotationWorker(QObject):
                     render_annotated_image(
                         self.image_path, annotations, self.output_path,
                         annotation_style=self.annotation_style,
+                        show_outlines=self.show_outlines,
                     )
             elif needs_grid:
                 self.progress.emit("Rendering coordinate grid…")

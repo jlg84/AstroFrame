@@ -37,6 +37,7 @@ def render_annotated_image(
     *,
     colour: str = "#83CBE8",
     annotation_style: str = "automatic",
+    show_outlines: bool = True,
 ) -> None:
     """Export an annotated copy without modifying the source photograph."""
 
@@ -77,7 +78,8 @@ def render_annotated_image(
             )
 
             if (
-                annotation.major_radius_px > 0
+                show_outlines
+                and annotation.major_radius_px > 0
                 and annotation.minor_radius_px > 0
                 and (annotation_style == "outlines" or not ellipse_is_oversized)
                 and annotation_style != "markers"

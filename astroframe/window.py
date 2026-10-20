@@ -5672,6 +5672,11 @@ class MainWindow(QMainWindow):
         grid_check = QCheckBox("RA/Dec coordinate grid")
         options_layout.addWidget(grid_check)
 
+        outlines_check = QCheckBox("Show object outlines")
+        outlines_check.setChecked(True)
+        options_layout.addWidget(outlines_check)
+
+
         subject_title_check = QCheckBox("Show primary subject title")
         subject_title_check.setChecked(True)
         options_layout.addWidget(subject_title_check)
@@ -5795,6 +5800,7 @@ class MainWindow(QMainWindow):
             return {
                 "galaxies": galaxies_check.isChecked(),
                 "grid": grid_check.isChecked(),
+                "show_outlines": outlines_check.isChecked(),
                 "subject_title": subject_title_check.isChecked(),
                 "nebulae": nebula_check.isChecked(),
                 "clusters": cluster_check.isChecked(),
@@ -5814,6 +5820,7 @@ class MainWindow(QMainWindow):
             checkbox_settings = (
                 ("galaxies", galaxies_check),
                 ("grid", grid_check),
+                ("show_outlines", outlines_check),
                 ("subject_title", subject_title_check),
                 ("nebulae", nebula_check),
                 ("clusters", cluster_check),
@@ -5850,6 +5857,7 @@ class MainWindow(QMainWindow):
             return {
                 "galaxies": True,
                 "grid": atlas,
+                "show_outlines": True,
                 "subject_title": True,
                 "nebulae": True,
                 "clusters": atlas,
@@ -5927,6 +5935,7 @@ class MainWindow(QMainWindow):
         for checkbox in (
             *object_checks,
             grid_check,
+            outlines_check,
             subject_title_check,
         ):
             checkbox.toggled.connect(mark_annotation_custom)
@@ -6070,6 +6079,7 @@ class MainWindow(QMainWindow):
             star_magnitude_limit=float(star_magnitude_combo.currentData()),
             output_max_edge=output_max_edge,
             annotation_style=annotation_style,
+            show_outlines=outlines_check.isChecked(),
             primary_subject=(
                 self._cached_target_for_current_image()
                 if subject_title_check.isChecked()
