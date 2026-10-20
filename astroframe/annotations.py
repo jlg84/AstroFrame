@@ -718,3 +718,138 @@ def annotate_barnard_objects(
 
     render_annotated_image(image_path, annotations, output_path, colour=colour)
     return len(annotations)
+
+
+def annotate_bright_stars(
+    image_path: str | Path,
+    wcs_path: str | Path,
+    output_path: str | Path,
+    *,
+    magnitude_limit: float = 6.0,
+    colour: str = "#FFD166",
+    progress=None,
+    collect_only: bool = False,
+) -> int | list[Annotation]:
+    """Annotate bright stars from the Yale Bright Star Catalogue."""
+    import csv
+    import io
+    import requests
+    from astropy.coordinates import SkyCoord
+    import astropy.units as u
+
+    cache_dir = Path.home() / ".astroframe" / "reference_catalogs"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    catalogue_path = cache_dir / "yale_bright_stars.tsv"
+
+    if not catalogue_path.is_file():
+        if progress:
+            progress("Downloading Yale Bright Star Catalogue…")
+        response = requests.get(
+            "https://vizier.cds.unistra.fr/viz-bin/asu-tsv",
+            params={
+                "-source": "V/50/catalog",
+                "-out": "HR,Name,RAJ2000,DEJ2000,Vmag",
+                "-out.max": "unlimited",
+            },
+            timeout=60,
+            headers={"User-Agent": "AstroFrame"},
+        )
+        response.raise_for_status()
+        data = response.text
+        if "RAJ2000" not in data or "Vmag" not in data:
+            raise ValueError("VizieR returned an invalid bright-star catalogue.")
+        temporary_path = catalogue_path.with_suffix(".tmp")
+        temporary_path.write_text(data, encoding="utf-8")
+        temporary_path.replace(catalogue_path)
+
+    if progress:
+        progress("Preparing image and WCS…")
+
+    width, height = image_dimensions(image_path)
+    centre_ra, centre_dec, radius = image_sky_coverage(
+        wcs_path, width, height
+    )
+    image_centre = SkyCoord(
+        ra=centre_ra * u.deg,
+        dec=centre_dec * u.deg,
+        frame="icrs",
+    )
+
+    if progress:
+        progress(f"Reading bright stars (magnitude {magnitude_limit:g} or brighter)…")
+
+    lines = [
+        line for line in catalogue_path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    header_index = next(
+        (i for i, line in enumerate(lines)
+         if {"HR", "RAJ2000", "DEJ2000", "Vmag"}.issubset(
+             {column.strip() for column in line.split("\t")}
+         )),
+        None,
+    )
+    if header_index is None:
+        raise ValueError("Could not find the expected bright-star catalogue columns.")
+
+    rows = csv.DictReader(
+        io.StringIO("\n".join(lines[header_index:])),
+        delimiter="\t",
+    )
+    annotations = []
+
+    for row in rows:
+        hr = (row.get("HR") or "").strip()
+        try:
+            if not hr.isdigit():
+                continue
+            magnitude = float(row["Vmag"])
+            if magnitude > magnitude_limit:
+                continue
+            coord = SkyCoord(
+                (row.get("RAJ2000") or "").strip(),
+                (row.get("DEJ2000") or "").strip(),
+                unit=(u.hourangle, u.deg),
+                frame="icrs",
+            )
+        except (ValueError, TypeError, KeyError):
+            continue
+
+        if coord.separation(image_centre).deg > radius + 0.02:
+            continue
+
+        try:
+            x, y = sky_to_pixel(
+                wcs_path,
+                float(coord.ra.deg),
+                float(coord.dec.deg),
+                image_height=height,
+            )
+        except (ValueError, KeyError, ZeroDivisionError):
+            continue
+
+        if not (0 <= x < width and 0 <= y < height):
+            continue
+
+        star_name = (row.get("Name") or "").strip()
+        star_name = " ".join(star_name.split())
+        label = star_name if star_name else f"HR {int(hr)}"
+
+        annotations.append(Annotation(
+            name=label,
+            x=x,
+            y=y,
+            colour=colour,
+            prefer_marker=True,
+        ))
+
+    if collect_only:
+        return annotations
+
+    render_annotated_image(
+        image_path,
+        annotations,
+        output_path,
+        colour=colour,
+    )
+    return len(annotations)

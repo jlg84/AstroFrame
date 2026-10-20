@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import Event
 from tempfile import TemporaryDirectory
 
 from PySide6.QtCore import QObject, Signal, Slot
 
 from .annotations import annotate_galaxies, annotate_openngc_objects, annotate_barnard_objects
+from .annotations import annotate_bright_stars
 from .coordinate_grid import render_coordinate_grid
 
 
@@ -14,6 +16,14 @@ class AnnotationWorker(QObject):
     succeeded = Signal(int, str)
     failed = Signal(str)
     finished = Signal()
+    cancelled = Signal()
+
+    def cancel(self) -> None:
+        self._cancel_event.set()
+
+    def _check_cancelled(self) -> None:
+        if self._cancel_event.is_set():
+            raise InterruptedError("Annotation cancelled")
 
     def __init__(
         self,
@@ -30,10 +40,13 @@ class AnnotationWorker(QObject):
         include_open_clusters: bool = False,
         include_globular_clusters: bool = False,
         include_dark_nebulae: bool = False,
+        include_bright_stars: bool = False,
+        star_magnitude_limit: float = 6.0,
         output_max_edge: int = 0,
         annotation_style: str = "automatic",
     ) -> None:
         super().__init__()
+        self._cancel_event = Event()
         self.image_path = Path(image_path)
         self.wcs_path = Path(wcs_path)
         self.catalogue_path = Path(catalogue_path) if catalogue_path is not None else None
@@ -46,6 +59,8 @@ class AnnotationWorker(QObject):
         self.include_open_clusters = include_open_clusters
         self.include_globular_clusters = include_globular_clusters
         self.include_dark_nebulae = include_dark_nebulae
+        self.include_bright_stars = include_bright_stars
+        self.star_magnitude_limit = float(star_magnitude_limit)
         self.output_max_edge = int(output_max_edge)
         self.annotation_style = annotation_style
 
@@ -57,6 +72,7 @@ class AnnotationWorker(QObject):
             from .annotations import sky_to_pixel, galaxy_ellipse_pixels
             from .annotations import Annotation
 
+            self._check_cancelled()
             selected_modes = []
             if self.include_nebulae:
                 selected_modes.append("nebulae")
@@ -98,6 +114,16 @@ class AnnotationWorker(QObject):
                     collect_only=True,
                 ))
 
+            if self.include_bright_stars:
+                self.progress.emit("Collecting Yale bright stars…")
+                annotations.extend(annotate_bright_stars(
+                    self.image_path, self.wcs_path, self.output_path,
+                    magnitude_limit=self.star_magnitude_limit,
+                    progress=self.progress.emit,
+                    collect_only=True,
+                ))
+
+            self._check_cancelled()
             count = len(annotations)
             if annotations:
                 self.progress.emit(f"Rendering {count} annotations together…")
@@ -147,7 +173,11 @@ class AnnotationWorker(QObject):
                 if not rgb.save(str(self.output_path), "PNG"):
                     raise OSError("Could not save RGB annotated PNG")
 
+            self._check_cancelled()
             self.succeeded.emit(count, str(self.output_path))
+        except InterruptedError:
+            self.output_path.unlink(missing_ok=True)
+            self.cancelled.emit()
         except Exception as exc:
             self.failed.emit(str(exc))
         finally:

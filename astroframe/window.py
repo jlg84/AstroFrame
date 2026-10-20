@@ -608,6 +608,17 @@ class MainWindow(QMainWindow):
         )
         reference.layout.addWidget(self.annotate_button)
 
+        self.cancel_annotation_button = QPushButton("Cancel Annotation")
+        self.cancel_annotation_button.setEnabled(False)
+        self.cancel_annotation_button.hide()
+        self.cancel_annotation_button.clicked.connect(self.cancel_annotation)
+        reference.layout.addWidget(self.cancel_annotation_button)
+
+        self.annotation_progress_label = QLabel("")
+        self.annotation_progress_label.setWordWrap(True)
+        self.annotation_progress_label.hide()
+        reference.layout.addWidget(self.annotation_progress_label)
+
         self.online_fallback_button = QPushButton("Try Astrometry.net blind solve…")
         self.online_fallback_button.setToolTip(
             "Explicitly send this image to the slower public Astrometry.net service."
@@ -5640,6 +5651,9 @@ class MainWindow(QMainWindow):
         options_dialog = QDialog(self)
         options_dialog.setWindowTitle("Annotate Image")
         options_layout = QVBoxLayout(options_dialog)
+        select_all_check = QCheckBox("Select all object types")
+        options_layout.addWidget(select_all_check)
+
         galaxies_check = QCheckBox("Galaxies")
         galaxies_check.setChecked(True)
         options_layout.addWidget(galaxies_check)
@@ -5664,9 +5678,55 @@ class MainWindow(QMainWindow):
         dark_nebula_check = QCheckBox("Dark nebulae (Barnard catalogue)")
         options_layout.addWidget(dark_nebula_check)
 
-        bright_stars_check = QCheckBox("Bright stars (coming soon)")
-        bright_stars_check.setEnabled(False)
+        bright_stars_check = QCheckBox("Bright stars (Yale Bright Star Catalogue)")
         options_layout.addWidget(bright_stars_check)
+
+        star_magnitude_label = QLabel("Bright-star magnitude limit")
+        options_layout.addWidget(star_magnitude_label)
+        star_magnitude_combo = QComboBox()
+        for magnitude in (2.0, 3.0, 4.0, 5.0, 6.0, 7.0):
+            star_magnitude_combo.addItem(f"{magnitude:.1f}", magnitude)
+        saved_magnitude = float(self.settings.value("annotationStarMagnitudeLimit", 6.0))
+        magnitude_index = star_magnitude_combo.findData(saved_magnitude)
+        star_magnitude_combo.setCurrentIndex(
+            magnitude_index if magnitude_index >= 0 else 4
+        )
+        star_magnitude_combo.setEnabled(False)
+        star_magnitude_label.setEnabled(False)
+        options_layout.addWidget(star_magnitude_combo)
+
+        def update_star_magnitude_enabled(checked):
+            star_magnitude_combo.setEnabled(checked)
+            star_magnitude_label.setEnabled(checked)
+
+        bright_stars_check.toggled.connect(update_star_magnitude_enabled)
+
+        object_checks = (
+            galaxies_check,
+            nebula_check,
+            cluster_check,
+            planetary_check,
+            open_cluster_check,
+            globular_check,
+            dark_nebula_check,
+            bright_stars_check,
+        )
+
+        def toggle_all_object_types(checked):
+            for checkbox in object_checks:
+                checkbox.setChecked(checked)
+
+        def update_select_all():
+            select_all_check.blockSignals(True)
+            select_all_check.setChecked(
+                all(checkbox.isChecked() for checkbox in object_checks)
+            )
+            select_all_check.blockSignals(False)
+
+        select_all_check.toggled.connect(toggle_all_object_types)
+        for checkbox in object_checks:
+            checkbox.toggled.connect(update_select_all)
+        update_select_all()
 
         # Output resolution for the finished annotated image.
         output_size_label = QLabel("Output image size")
@@ -5709,6 +5769,7 @@ class MainWindow(QMainWindow):
                 or open_cluster_check.isChecked()
                 or globular_check.isChecked()
                 or dark_nebula_check.isChecked()
+                or bright_stars_check.isChecked()
             )
 
         galaxies_check.toggled.connect(update_annotation_ok)
@@ -5719,6 +5780,7 @@ class MainWindow(QMainWindow):
         open_cluster_check.toggled.connect(update_annotation_ok)
         globular_check.toggled.connect(update_annotation_ok)
         dark_nebula_check.toggled.connect(update_annotation_ok)
+        bright_stars_check.toggled.connect(update_annotation_ok)
         update_annotation_ok()
         if options_dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -5772,6 +5834,10 @@ class MainWindow(QMainWindow):
 
         self.annotate_button.setEnabled(False)
         self.annotate_button.setText("Annotating…")
+        self.cancel_annotation_button.setEnabled(True)
+        self.cancel_annotation_button.show()
+        self.annotation_progress_label.setText("Starting annotation…")
+        self.annotation_progress_label.show()
         self._append_solver_log(f"Annotation started: {source.name}")
 
         thread = QThread(self)
@@ -5788,6 +5854,8 @@ class MainWindow(QMainWindow):
             include_open_clusters=open_cluster_check.isChecked(),
             include_globular_clusters=globular_check.isChecked(),
             include_dark_nebulae=dark_nebula_check.isChecked(),
+            include_bright_stars=bright_stars_check.isChecked(),
+            star_magnitude_limit=float(star_magnitude_combo.currentData()),
             output_max_edge=output_max_edge,
             annotation_style=annotation_style,
         )
@@ -5799,14 +5867,34 @@ class MainWindow(QMainWindow):
         worker.progress.connect(self._annotation_progress)
         worker.succeeded.connect(self._annotation_succeeded)
         worker.failed.connect(self._annotation_failed)
+        worker.cancelled.connect(self._annotation_cancelled)
         worker.finished.connect(thread.quit)
         worker.finished.connect(worker.deleteLater)
         thread.finished.connect(self._annotation_finished)
         thread.finished.connect(thread.deleteLater)
         thread.start()
 
+    def cancel_annotation(self) -> None:
+        worker = getattr(self, "annotation_worker", None)
+        if worker is None:
+            return
+        worker.cancel()
+        self.cancel_annotation_button.setEnabled(False)
+        self.annotation_progress_label.setText(
+            "Cancelling… waiting for the current processing stage to finish."
+        )
+        self._append_solver_log("Annotation cancellation requested")
+
+    @Slot()
+    def _annotation_cancelled(self) -> None:
+        self._append_solver_log("Annotation cancelled")
+        self.annotation_progress_label.setText("Annotation cancelled.")
+
     @Slot(str)
     def _annotation_progress(self, message: str) -> None:
+        if not self.cancel_annotation_button.isEnabled():
+            return
+        self.annotation_progress_label.setText(message)
         self._append_solver_log(f"Annotation: {message}")
 
     @Slot(int, str)
@@ -5855,6 +5943,9 @@ class MainWindow(QMainWindow):
     def _annotation_finished(self) -> None:
         self.annotation_thread = None
         self.annotation_worker = None
+        self.cancel_annotation_button.setEnabled(False)
+        self.cancel_annotation_button.hide()
+        self.annotation_progress_label.hide()
         self.annotate_button.setText("Annotate Image…")
         self.annotate_button.setEnabled(
             bool(
