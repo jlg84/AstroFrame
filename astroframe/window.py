@@ -5660,6 +5660,9 @@ class MainWindow(QMainWindow):
         preset_combo.addItem("Custom", "custom")
         options_layout.addWidget(preset_combo)
 
+        restore_preset_button = QPushButton("Restore Preset Defaults")
+        options_layout.addWidget(restore_preset_button)
+
         select_all_check = QCheckBox("Select all object types")
         options_layout.addWidget(select_all_check)
 
@@ -5899,6 +5902,25 @@ class MainWindow(QMainWindow):
                 )
             finally:
                 preset_combo.blockSignals(False)
+
+        def restore_current_preset_defaults():
+            nonlocal preset_updating
+
+            defaults = default_annotation_configuration(active_preset)
+            working_configs[active_preset] = defaults.copy()
+
+            preset_updating = True
+            try:
+                restore_annotation_configuration(defaults)
+                preset_combo.setCurrentIndex(
+                    preset_combo.findData(active_preset)
+                )
+            finally:
+                preset_updating = False
+
+        restore_preset_button.clicked.connect(
+            restore_current_preset_defaults
+        )
 
         preset_combo.currentIndexChanged.connect(apply_annotation_preset)
 
