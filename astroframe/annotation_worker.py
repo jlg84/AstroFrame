@@ -46,6 +46,8 @@ class AnnotationWorker(QObject):
         annotation_style: str = "automatic",
         show_outlines: bool = True,
         include_imported_collections: bool = False,
+        include_bica: bool = False,
+        bica_detail: str = "featured",
         primary_subject: dict | None = None,
         show_subject_title: bool = True,
     ) -> None:
@@ -69,6 +71,11 @@ class AnnotationWorker(QObject):
         self.annotation_style = annotation_style
         self.show_outlines = show_outlines
         self.include_imported_collections = include_imported_collections
+        self.include_bica = include_bica
+        self.bica_detail = (
+            bica_detail if bica_detail in ("featured", "detailed")
+            else "featured"
+        )
         self.primary_subject = primary_subject
         self.show_subject_title = show_subject_title
 
@@ -133,6 +140,128 @@ class AnnotationWorker(QObject):
             + (", ".join(item.name for item in results) if results else "none")
         )
         return results
+
+    def _collect_bica_annotations(self, existing_annotations):
+        """Select prominent, well-separated Bica objects inside the image."""
+        from math import hypot
+        from .annotations import (
+            Annotation, image_dimensions, image_sky_coverage, sky_to_pixel
+        )
+        from .reference_catalog import query_bica, bica_cache_ready
+
+        width, height = image_dimensions(self.image_path)
+        centre_ra, centre_dec, radius = image_sky_coverage(
+            self.wcs_path, width, height
+        )
+
+        # Bica covers the Magellanic Clouds, not the entire sky.
+        near_lmc = hypot(
+            (centre_ra - 80.9) * 0.35, centre_dec + 69.8
+        ) < radius + 9
+        near_smc = hypot(
+            (centre_ra - 13.2) * 0.4, centre_dec + 72.8
+        ) < radius + 7
+
+        if not (near_lmc or near_smc):
+            self.progress.emit("Bica: outside Magellanic Cloud region.")
+            return []
+
+        if not bica_cache_ready("featured"):
+            self.progress.emit("Bica: local catalogue cache unavailable.")
+            return []
+
+        objects = query_bica(
+            centre_ra, centre_dec,
+            2 * radius, 2 * radius,
+            "featured",
+        )
+
+        occupied = [
+            (float(item.x), float(item.y))
+            for item in existing_annotations
+        ]
+
+        if self.primary_subject:
+            ra = self.primary_subject.get("subject_ra_deg")
+            dec = self.primary_subject.get("subject_dec_deg")
+            if ra is not None and dec is not None:
+                x, y = sky_to_pixel(
+                    self.wcs_path, float(ra), float(dec),
+                    image_height=height,
+                )
+                if 0 <= x < width and 0 <= y < height:
+                    occupied.append((x, y))
+
+        selected = []
+        detailed = self.bica_detail == "detailed"
+        limit = 100 if detailed else 30
+        spacing = 45 if detailed else 70
+
+        # Featured retains the original score-first selection.
+        # Detailed makes an initial pass across image regions.
+        ranked = sorted(
+            objects, key=lambda item: item.feature_score, reverse=True
+        )
+
+        if detailed:
+            cells = {}
+            for obj in ranked:
+                self._check_cancelled()
+                x, y = sky_to_pixel(
+                    self.wcs_path, obj.ra_deg, obj.dec_deg,
+                    image_height=height,
+                )
+                if not (0 <= x < width and 0 <= y < height):
+                    continue
+                col = min(5, int(x * 6 / width))
+                row = min(3, int(y * 4 / height))
+                cells.setdefault((row, col), []).append((obj, x, y))
+
+            # Round-robin selection gives every populated region
+            # opportunities before any one region dominates.
+            ordered = []
+            maximum = max((len(v) for v in cells.values()), default=0)
+            for index in range(maximum):
+                for cell in sorted(cells):
+                    if index < len(cells[cell]):
+                        ordered.append(cells[cell][index])
+        else:
+            ordered = []
+            for obj in ranked:
+                self._check_cancelled()
+                x, y = sky_to_pixel(
+                    self.wcs_path, obj.ra_deg, obj.dec_deg,
+                    image_height=height,
+                )
+                if 0 <= x < width and 0 <= y < height:
+                    ordered.append((obj, x, y))
+
+        for obj, x, y in ordered:
+            self._check_cancelled()
+
+            if any(
+                hypot(x - px, y - py) < spacing
+                for px, py in occupied
+            ):
+                continue
+
+            selected.append(Annotation(
+                name=obj.name,
+                x=x,
+                y=y,
+                colour="#D8B878",
+                prefer_marker=True,
+            ))
+            occupied.append((x, y))
+
+            if len(selected) == limit:
+                break
+
+        self.progress.emit(
+            f"Bica: selected {len(selected)} {self.bica_detail} objects "
+            f"from {len(objects)} candidates."
+        )
+        return selected
 
     @Slot()
     def run(self) -> None:
@@ -252,6 +381,12 @@ class AnnotationWorker(QObject):
                     item for item in annotations
                     if normalized_identifier(item.name) != primary_id
                 ]
+
+            if self.include_bica:
+                self.progress.emit("Collecting featured Bica objects…")
+                annotations.extend(
+                    self._collect_bica_annotations(annotations)
+                )
 
             count = len(annotations)
             if annotations:

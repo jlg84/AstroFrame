@@ -5702,6 +5702,25 @@ class MainWindow(QMainWindow):
         imported_collections_check = QCheckBox("Imported collection objects")
         options_layout.addWidget(imported_collections_check)
 
+        bica_check = QCheckBox("Bica objects (Magellanic Clouds)")
+        options_layout.addWidget(bica_check)
+
+        bica_detail_label = QLabel("Bica annotation detail")
+        options_layout.addWidget(bica_detail_label)
+        bica_detail_combo = QComboBox()
+        bica_detail_combo.addItem("Featured (up to 30 objects)", "featured")
+        bica_detail_combo.addItem("Detailed (up to 100 objects)", "detailed")
+        options_layout.addWidget(bica_detail_combo)
+
+        bica_detail_label.setEnabled(False)
+        bica_detail_combo.setEnabled(False)
+
+        def update_bica_detail_enabled(checked):
+            bica_detail_label.setEnabled(checked)
+            bica_detail_combo.setEnabled(checked)
+
+        bica_check.toggled.connect(update_bica_detail_enabled)
+
         bright_stars_check = QCheckBox("Bright stars (Yale Bright Star Catalogue)")
         options_layout.addWidget(bright_stars_check)
 
@@ -5734,6 +5753,7 @@ class MainWindow(QMainWindow):
             globular_check,
             dark_nebula_check,
             imported_collections_check,
+            bica_check,
             bright_stars_check,
         )
 
@@ -5813,6 +5833,8 @@ class MainWindow(QMainWindow):
                 "globular": globular_check.isChecked(),
                 "dark_nebulae": dark_nebula_check.isChecked(),
                 "imported_collections": imported_collections_check.isChecked(),
+                "bica": bica_check.isChecked(),
+                "bica_detail": str(bica_detail_combo.currentData()),
                 "bright_stars": bright_stars_check.isChecked(),
                 "star_magnitude": float(star_magnitude_combo.currentData()),
                 "style": str(style_combo.currentData()),
@@ -5834,12 +5856,18 @@ class MainWindow(QMainWindow):
                 ("globular", globular_check),
                 ("dark_nebulae", dark_nebula_check),
                 ("imported_collections", imported_collections_check),
+                ("bica", bica_check),
                 ("bright_stars", bright_stars_check),
             )
 
             for key, checkbox in checkbox_settings:
                 if isinstance(data.get(key), bool):
                     checkbox.setChecked(data[key])
+
+            if "bica_detail" in data:
+                index = bica_detail_combo.findData(data["bica_detail"])
+                if index >= 0:
+                    bica_detail_combo.setCurrentIndex(index)
 
             if "star_magnitude" in data:
                 index = star_magnitude_combo.findData(
@@ -5872,6 +5900,8 @@ class MainWindow(QMainWindow):
                 "globular": atlas,
                 "dark_nebulae": atlas,
                 "imported_collections": atlas,
+                "bica": atlas,
+                "bica_detail": "featured",
                 "bright_stars": atlas,
                 "star_magnitude": 6.0,
                 "style": "outlines" if atlas else "automatic",
@@ -5947,6 +5977,7 @@ class MainWindow(QMainWindow):
         ):
             checkbox.toggled.connect(mark_annotation_custom)
 
+        bica_detail_combo.currentIndexChanged.connect(mark_annotation_custom)
         style_combo.currentIndexChanged.connect(mark_annotation_custom)
         star_magnitude_combo.currentIndexChanged.connect(mark_annotation_custom)
 
@@ -6088,6 +6119,8 @@ class MainWindow(QMainWindow):
             annotation_style=annotation_style,
             show_outlines=outlines_check.isChecked(),
             include_imported_collections=imported_collections_check.isChecked(),
+            include_bica=bica_check.isChecked(),
+            bica_detail=str(bica_detail_combo.currentData()),
             primary_subject=self._cached_target_for_current_image(),
             show_subject_title=subject_title_check.isChecked(),
         )
