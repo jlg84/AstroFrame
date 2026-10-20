@@ -111,13 +111,101 @@ class AnnotationWorker(QObject):
             float(centre_ra), float(centre_dec), 5.0
         )
 
+        # Validate imported galaxy coordinates against HyperLEDA when
+        # an exact NGC/IC identifier is available. Never modify source data.
+        import re
+        from math import acos, cos, radians, sin
+        from .galaxy_catalogue import read_galaxies
+
+        galaxy_positions = {}
+        galaxy_candidates = []
+        if self.catalogue_path and self.catalogue_path.is_file():
+            for galaxy in read_galaxies(self.catalogue_path):
+                key = re.fullmatch(
+                    r"(NGC|IC)\s*0*(\d+)",
+                    galaxy.name.strip().upper(),
+                )
+                if key:
+                    galaxy_key = f"{key.group(1)}{int(key.group(2))}"
+                    galaxy_positions[galaxy_key] = (
+                        galaxy.ra_deg, galaxy.dec_deg
+                    )
+                    galaxy_candidates.append((
+                        galaxy_key, galaxy.ra_deg, galaxy.dec_deg
+                    ))
+
         results = []
         seen = set()
+        rejected = 0
         for target, collection, entry, distance in matches:
             self._check_cancelled()
             if target.id in seen:
                 continue
             seen.add(target.id)
+
+            match = re.fullmatch(
+                r"(NGC|IC)\s*0*(\d+)",
+                str(target.canonical_name).strip().upper(),
+            )
+            if match:
+                key = f"{match.group(1)}{int(match.group(2))}"
+                expected = galaxy_positions.get(key)
+                if expected is not None:
+                    ra1, dec1 = map(radians, (
+                        float(target.ra_deg), float(target.dec_deg)
+                    ))
+                    ra2, dec2 = map(radians, expected)
+                    cosine = (
+                        sin(dec1) * sin(dec2)
+                        + cos(dec1) * cos(dec2) * cos(ra1 - ra2)
+                    )
+                    separation_arcmin = (
+                        acos(max(-1.0, min(1.0, cosine)))
+                        * 180.0 / 3.141592653589793 * 60.0
+                    )
+                    if separation_arcmin > 5.0:
+                        rejected += 1
+                        self.progress.emit(
+                            f"Imported {target.canonical_name}: suppressed "
+                            f"coordinate mismatch ({separation_arcmin:.1f} arcmin)."
+                        )
+                        continue
+
+                else:
+                    # No exact catalogue match: detect a suspicious
+                    # coincidence with a differently named galaxy.
+                    ra1, dec1 = map(radians, (
+                        float(target.ra_deg), float(target.dec_deg)
+                    ))
+                    for other_key, other_ra, other_dec in galaxy_candidates:
+                        if other_key == key:
+                            continue
+                        # A galaxy more than 10 arcseconds away in
+                        # declination cannot meet our coincidence threshold.
+                        if abs(float(target.dec_deg) - other_dec) >= 10.0 / 3600.0:
+                            continue
+                        ra2, dec2 = map(radians, (other_ra, other_dec))
+                        cosine = (
+                            sin(dec1) * sin(dec2)
+                            + cos(dec1) * cos(dec2) * cos(ra1 - ra2)
+                        )
+                        separation_arcsec = (
+                            acos(max(-1.0, min(1.0, cosine)))
+                            * 180.0 / 3.141592653589793 * 3600.0
+                        )
+                        if separation_arcsec < 10.0:
+                            rejected += 1
+                            self.progress.emit(
+                                f"Imported {target.canonical_name}: suppressed "
+                                f"because its coordinates coincide with "
+                                f"{other_key} ({separation_arcsec:.1f} arcsec)."
+                            )
+                            break
+                    else:
+                        other_key = None
+
+                    if other_key is not None:
+                        continue
 
             try:
                 x, y = sky_to_pixel(
@@ -139,6 +227,12 @@ class AnnotationWorker(QObject):
                 colour="#E2C17A",
                 prefer_marker=True,
             ))
+
+        if rejected:
+            self.progress.emit(
+                f"Imported collection validation suppressed {rejected} "
+                "questionable marker(s)."
+            )
 
         self.progress.emit(
             "Imported collection objects inside image: "
@@ -434,10 +528,21 @@ class AnnotationWorker(QObject):
                 primary_id = normalized_identifier(
                     self.primary_subject["name"]
                 )
-                annotations = [
-                    item for item in annotations
-                    if normalized_identifier(item.name) != primary_id
-                ]
+                # Retain the primary galaxy's HyperLEDA ellipse and label.
+                # Suppress duplicate primary markers from other catalogues.
+                deduplicated = []
+                for item in annotations:
+                    if normalized_identifier(item.name) != primary_id:
+                        deduplicated.append(item)
+                    elif (
+                        self.include_galaxies
+                        and item.major_radius_px > 0
+                        and item.minor_radius_px > 0
+                        and not item.prefer_marker
+                    ):
+                        deduplicated.append(item)
+
+                annotations = deduplicated
 
             if self.include_bica:
                 self.progress.emit("Collecting featured Bica objects…")
