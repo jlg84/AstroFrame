@@ -62,6 +62,9 @@ def render_annotated_image(
         font.setPixelSize(round(15 * scale))
         painter.setFont(font)
 
+        # Track occupied label rectangles to prevent text collisions.
+        placed_label_rects: list[QRectF] = []
+
         for annotation in annotations:
             annotation_colour = annotation.colour or colour
             pen.setColor(QColor(annotation_colour))
@@ -150,14 +153,59 @@ def render_annotated_image(
                 ),
             )
 
-            # A translucent dark backing keeps the label readable over
-            # bright emission and reflection nebulosity.
-            text_rect = QRectF(
-                label_x - 4 * scale,
-                label_y - metrics.ascent() - 3 * scale,
-                label_width + 8 * scale,
-                metrics.height() + 6 * scale,
-            )
+            # Keep the original position unless it collides with
+            # a label already placed.
+            def label_rectangle(x, y):
+                return QRectF(
+                    x - 4 * scale,
+                    y - metrics.ascent() - 3 * scale,
+                    label_width + 8 * scale,
+                    metrics.height() + 6 * scale,
+                )
+
+            def position_is_clear(x, y):
+                rect = label_rectangle(x, y)
+                if (
+                    rect.left() < 0
+                    or rect.top() < 0
+                    or rect.right() > image.width()
+                    or rect.bottom() > image.height()
+                ):
+                    return False
+                return not any(
+                    rect.adjusted(
+                        -4 * scale, -4 * scale,
+                        4 * scale, 4 * scale
+                    ).intersects(other)
+                    for other in placed_label_rects
+                )
+
+            if not position_is_clear(label_x, label_y):
+                candidates = [
+                    (annotation.x - left_extent - label_width - gap,
+                     annotation.y),
+                    (annotation.x + right_extent + gap,
+                     annotation.y - metrics.height() - gap),
+                    (annotation.x + right_extent + gap,
+                     annotation.y + metrics.height() + gap),
+                    (annotation.x - label_width / 2,
+                     annotation.y - max(
+                         left_extent, right_extent
+                     ) - gap),
+                    (annotation.x - label_width / 2,
+                     annotation.y + max(
+                         left_extent, right_extent
+                     ) + metrics.height() + gap),
+                ]
+
+                for candidate_x, candidate_y in candidates:
+                    if position_is_clear(candidate_x, candidate_y):
+                        label_x, label_y = candidate_x, candidate_y
+                        break
+
+            # A translucent dark backing keeps labels readable.
+            text_rect = label_rectangle(label_x, label_y)
+            placed_label_rects.append(text_rect)
             painter.fillRect(text_rect, QColor(0, 0, 0, 180))
             painter.setPen(QColor(annotation_colour))
             painter.drawText(
