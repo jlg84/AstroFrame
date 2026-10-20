@@ -26,7 +26,11 @@ class AnnotationWorker(QObject):
         include_grid: bool = False,
         include_nebulae: bool = False,
         include_clusters: bool = False,
+        include_planetary_nebulae: bool = False,
+        include_open_clusters: bool = False,
+        include_globular_clusters: bool = False,
         output_max_edge: int = 0,
+        annotation_style: str = "automatic",
     ) -> None:
         super().__init__()
         self.image_path = Path(image_path)
@@ -37,7 +41,11 @@ class AnnotationWorker(QObject):
         self.include_grid = include_grid
         self.include_nebulae = include_nebulae
         self.include_clusters = include_clusters
+        self.include_planetary_nebulae = include_planetary_nebulae
+        self.include_open_clusters = include_open_clusters
+        self.include_globular_clusters = include_globular_clusters
         self.output_max_edge = int(output_max_edge)
+        self.annotation_style = annotation_style
 
     @Slot()
     def run(self) -> None:
@@ -52,74 +60,61 @@ class AnnotationWorker(QObject):
                 selected_modes.append("nebulae")
             if self.include_clusters:
                 selected_modes.append("clusters")
+            if self.include_planetary_nebulae:
+                selected_modes.append("planetary_nebulae")
+            if self.include_open_clusters:
+                selected_modes.append("open_clusters")
+            if self.include_globular_clusters:
+                selected_modes.append("globular_clusters")
 
             needs_galaxies = self.include_galaxies
             needs_grid = self.include_grid
             count = 0
 
-            if not selected_modes and needs_galaxies and not needs_grid:
-                count = annotate_galaxies(
-                    self.image_path,
-                    self.wcs_path,
-                    self.catalogue_path,
-                    self.output_path,
-                    progress=self.progress.emit,
-                )
-            elif not selected_modes and not needs_galaxies and needs_grid:
-                self.progress.emit("Rendering coordinate grid…")
-                render_coordinate_grid(
-                    self.image_path,
-                    self.wcs_path,
-                    self.output_path,
-                )
-            else:
-                with TemporaryDirectory() as temp_dir:
-                    working_image = self.image_path
-                    if needs_galaxies:
-                        galaxy_path = Path(temp_dir) / "galaxies.png"
-                        count = annotate_galaxies(
-                            working_image,
-                            self.wcs_path,
-                            self.catalogue_path,
-                            galaxy_path,
-                            progress=self.progress.emit,
+            annotations = []
+            if needs_galaxies:
+                self.progress.emit("Collecting galaxy annotations…")
+                annotations.extend(annotate_galaxies(
+                    self.image_path, self.wcs_path, self.catalogue_path,
+                    self.output_path, progress=self.progress.emit,
+                    collect_only=True,
+                ))
+
+            for mode in selected_modes:
+                self.progress.emit(f"Collecting OpenNGC {mode}…")
+                annotations.extend(annotate_openngc_objects(
+                    self.image_path, self.wcs_path, self.output_path,
+                    mode=mode, progress=self.progress.emit,
+                    collect_only=True,
+                ))
+
+            count = len(annotations)
+            if annotations:
+                self.progress.emit(f"Rendering {count} annotations together…")
+                if needs_grid:
+                    with TemporaryDirectory() as temp_dir:
+                        annotated_path = Path(temp_dir) / "annotated.png"
+                        render_annotated_image(
+                            self.image_path, annotations, annotated_path,
+                            annotation_style=self.annotation_style,
                         )
-                        working_image = galaxy_path
-
-                    if selected_modes:
-                        catalogue_path = Path(temp_dir) / "catalogue.png"
-                        working_catalogue_image = working_image
-                        total_objects = 0
-
-                        for mode in selected_modes:
-                            self.progress.emit(
-                                f"Annotating OpenNGC {mode}…"
-                            )
-                            intermediate = (
-                                Path(temp_dir) / f"{mode}.png"
-                            )
-                            total_objects += annotate_openngc_objects(
-                                working_catalogue_image,
-                                self.wcs_path,
-                                intermediate,
-                                mode=mode,
-                                progress=self.progress.emit,
-                            )
-                            working_catalogue_image = intermediate
-
-                        working_image = working_catalogue_image
-                        count += total_objects
-
-                    if needs_grid:
                         self.progress.emit("Adding coordinate grid…")
                         render_coordinate_grid(
-                            working_image,
-                            self.wcs_path,
-                            self.output_path,
+                            annotated_path, self.wcs_path, self.output_path,
                         )
-                    elif working_image != self.image_path:
-                        import shutil
-                        shutil.copy2(working_image, self.output_path)
+                else:
+                    render_annotated_image(
+                        self.image_path, annotations, self.output_path,
+                        annotation_style=self.annotation_style,
+                    )
+            elif needs_grid:
+                self.progress.emit("Rendering coordinate grid…")
+                render_coordinate_grid(
+                    self.image_path, self.wcs_path, self.output_path,
+                )
+            else:
+                import shutil
+                shutil.copy2(self.image_path, self.output_path)
 
             # Export the final opaque annotation as RGB PNG, without alpha.
             if self.output_path.suffix.lower() == ".png":

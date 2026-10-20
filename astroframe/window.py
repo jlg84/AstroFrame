@@ -603,7 +603,7 @@ class MainWindow(QMainWindow):
         self.annotate_button.setEnabled(False)
         self.annotate_button.clicked.connect(self.annotate_image)
         self.annotate_button.setToolTip(
-            "Identify and label galaxies using the image's plate-solved WCS. "
+            "Identify and label galaxies, nebulae and star clusters using the image's plate-solved WCS. "
             "The annotated image is saved as a new file; the original is unchanged."
         )
         reference.layout.addWidget(self.annotate_button)
@@ -5649,8 +5649,17 @@ class MainWindow(QMainWindow):
         nebula_check = QCheckBox("Nebulae (Bica catalogue)")
         options_layout.addWidget(nebula_check)
 
-        cluster_check = QCheckBox("Star clusters (Bica catalogue)")
+        cluster_check = QCheckBox("Other star clusters (OpenNGC)")
         options_layout.addWidget(cluster_check)
+
+        planetary_check = QCheckBox("Planetary nebulae")
+        options_layout.addWidget(planetary_check)
+
+        open_cluster_check = QCheckBox("Open clusters")
+        options_layout.addWidget(open_cluster_check)
+
+        globular_check = QCheckBox("Globular clusters")
+        options_layout.addWidget(globular_check)
 
         # Output resolution for the finished annotated image.
         output_size_label = QLabel("Output image size")
@@ -5664,10 +5673,18 @@ class MainWindow(QMainWindow):
         output_size_combo.setCurrentIndex(max(0, saved_index))
         options_layout.addWidget(output_size_combo)
 
+        style_label = QLabel("Annotation style")
+        options_layout.addWidget(style_label)
+        style_combo = QComboBox()
+        style_combo.addItem("Automatic (recommended)", "automatic")
+        style_combo.addItem("Catalogue outlines", "outlines")
+        style_combo.addItem("Identification markers", "markers")
+        saved_style = self.settings.value("annotationStyle", "automatic")
+        style_index = style_combo.findData(saved_style)
+        style_combo.setCurrentIndex(max(0, style_index))
+        options_layout.addWidget(style_combo)
+
         for category in (
-            "Planetary nebulae",
-            "Open clusters",
-            "Globular clusters",
             "Dark nebulae",
             "Bright stars",
         ):
@@ -5689,12 +5706,18 @@ class MainWindow(QMainWindow):
                 or grid_check.isChecked()
                 or nebula_check.isChecked()
                 or cluster_check.isChecked()
+                or planetary_check.isChecked()
+                or open_cluster_check.isChecked()
+                or globular_check.isChecked()
             )
 
         galaxies_check.toggled.connect(update_annotation_ok)
         grid_check.toggled.connect(update_annotation_ok)
         nebula_check.toggled.connect(update_annotation_ok)
         cluster_check.toggled.connect(update_annotation_ok)
+        planetary_check.toggled.connect(update_annotation_ok)
+        open_cluster_check.toggled.connect(update_annotation_ok)
+        globular_check.toggled.connect(update_annotation_ok)
         update_annotation_ok()
         if options_dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -5729,16 +5752,22 @@ class MainWindow(QMainWindow):
 
         output_max_edge = int(output_size_combo.currentData())
         self.settings.setValue("annotationOutputSize", output_max_edge)
+        annotation_style = str(style_combo.currentData())
+        self.settings.setValue("annotationStyle", annotation_style)
 
+        selected_openngc = (
+            nebula_check.isChecked()
+            or cluster_check.isChecked()
+            or planetary_check.isChecked()
+            or open_cluster_check.isChecked()
+            or globular_check.isChecked()
+        )
         self.annotation_grid_only = (
             grid_check.isChecked()
             and not galaxies_check.isChecked()
-            and not nebula_check.isChecked()
-            and not cluster_check.isChecked()
+            and not selected_openngc
         )
-        self.annotation_has_catalogue_objects = (
-            nebula_check.isChecked() or cluster_check.isChecked()
-        )
+        self.annotation_has_catalogue_objects = selected_openngc
 
         self.annotate_button.setEnabled(False)
         self.annotate_button.setText("Annotating…")
@@ -5754,7 +5783,11 @@ class MainWindow(QMainWindow):
             include_grid=grid_check.isChecked(),
             include_nebulae=nebula_check.isChecked(),
             include_clusters=cluster_check.isChecked(),
+            include_planetary_nebulae=planetary_check.isChecked(),
+            include_open_clusters=open_cluster_check.isChecked(),
+            include_globular_clusters=globular_check.isChecked(),
             output_max_edge=output_max_edge,
+            annotation_style=annotation_style,
         )
         self.annotation_thread = thread
         self.annotation_worker = worker

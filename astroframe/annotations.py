@@ -26,6 +26,7 @@ class Annotation:
     major_radius_px: float = 0.0
     minor_radius_px: float = 0.0
     image_angle_deg: float = 0.0
+    colour: str | None = None
 
 
 def render_annotated_image(
@@ -34,6 +35,7 @@ def render_annotated_image(
     output_path: str | Path,
     *,
     colour: str = "#83CBE8",
+    annotation_style: str = "automatic",
 ) -> None:
     """Export an annotated copy without modifying the source photograph."""
 
@@ -59,9 +61,26 @@ def render_annotated_image(
         painter.setFont(font)
 
         for annotation in annotations:
+            annotation_colour = annotation.colour or colour
+            pen.setColor(QColor(annotation_colour))
+            painter.setPen(pen)
             centre = QPointF(annotation.x, annotation.y)
 
-            if annotation.major_radius_px > 0 and annotation.minor_radius_px > 0:
+            ellipse_is_oversized = (
+                annotation.major_radius_px > 0
+                and annotation.minor_radius_px > 0
+                and (
+                    2 * max(annotation.major_radius_px, annotation.minor_radius_px)
+                    > 0.8 * min(image.width(), image.height())
+                )
+            )
+
+            if (
+                annotation.major_radius_px > 0
+                and annotation.minor_radius_px > 0
+                and (annotation_style == "outlines" or not ellipse_is_oversized)
+                and annotation_style != "markers"
+            ):
                 # Draw the catalogue ellipse in image coordinates.
                 painter.save()
                 painter.translate(centre)
@@ -87,6 +106,7 @@ def render_annotated_image(
                 radius = 12.0 * scale
                 painter.drawEllipse(centre, radius, radius)
                 left_extent = radius
+                right_extent = radius
                 label_x = annotation.x + radius + 6 * scale
 
             # Prefer a label outside the ellipse, but avoid pushing it
@@ -132,7 +152,7 @@ def render_annotated_image(
                 metrics.height() + 6 * scale,
             )
             painter.fillRect(text_rect, QColor(0, 0, 0, 180))
-            painter.setPen(QColor(colour))
+            painter.setPen(QColor(annotation_colour))
             painter.drawText(
                 QPointF(label_x, label_y),
                 annotation.name,
@@ -338,14 +358,22 @@ def annotate_openngc_objects(
     min_major_arcmin: float = 0.5,
     colour: str = "#83CBE8",
     progress=None,
-) -> int:
+    collect_only: bool = False,
+) -> int | list[Annotation]:
     """Annotate OpenNGC nebulae or star clusters on a plate-solved image."""
     import csv
     import requests
     from astropy.coordinates import SkyCoord
     import astropy.units as u
 
-    if mode not in {"nebulae", "clusters"}:
+    supported_modes = {
+        "nebulae": {"Neb", "HII", "EmN", "RfN", "SNR"},
+        "clusters": {"Cl+N"},
+        "planetary_nebulae": {"PN"},
+        "open_clusters": {"OCl"},
+        "globular_clusters": {"GCl"},
+    }
+    if mode not in supported_modes:
         raise ValueError(f"Unsupported OpenNGC annotation mode: {mode}")
 
     cache_dir = Path.home() / ".astroframe" / "reference_catalogs"
@@ -372,8 +400,7 @@ def annotate_openngc_objects(
         wcs_path, width, height
     )
 
-    nebula_types = {"Neb", "HII", "EmN", "RfN", "Dn", "SNR", "PN", "Cl+N"}
-    cluster_types = {"OC", "Gb", "Cl", "Cl+N"}
+
 
     if progress:
         progress(f"Reading OpenNGC {mode} catalogue…")
@@ -389,9 +416,7 @@ def annotate_openngc_objects(
         reader = csv.DictReader(handle, delimiter=";")
         for row in reader:
             object_type = (row.get("Type") or "").strip()
-            if mode == "nebulae" and object_type not in nebula_types:
-                continue
-            if mode == "clusters" and object_type not in cluster_types:
+            if object_type not in supported_modes[mode]:
                 continue
 
             try:
@@ -429,7 +454,7 @@ def annotate_openngc_objects(
                 continue
 
             catalogue_name = (row.get("Name") or "").strip()
-            common_name = (row.get("Common names") or "").strip()
+            common_name = (row.get("Common names") or "").split(",", 1)[0].strip()
             messier = (row.get("M") or "").strip()
 
             # Format catalogue identifiers for readability.
@@ -474,6 +499,9 @@ def annotate_openngc_objects(
                 )
             )
 
+    if collect_only:
+        return [Annotation(**{**vars(a), "colour": colour}) for a in annotations]
+
     if progress:
         progress(f"Rendering {len(annotations)} OpenNGC annotations…")
 
@@ -492,7 +520,8 @@ def annotate_galaxies(
     min_major_arcmin: float = 1.0,
     colour: str = "#00FFFF",
     progress=None,
-) -> int:
+    collect_only: bool = False,
+) -> int | list[Annotation]:
     """Automatically annotate catalogue galaxies in a plate-solved image.
 
     Returns the number of galaxies annotated.
@@ -563,6 +592,9 @@ def annotate_galaxies(
                 image_angle_deg=angle,
             )
         )
+
+    if collect_only:
+        return [Annotation(**{**vars(a), "colour": colour}) for a in annotations]
 
     if progress:
         progress("Rendering annotated image…")
