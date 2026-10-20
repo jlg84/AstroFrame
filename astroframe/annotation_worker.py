@@ -44,6 +44,7 @@ class AnnotationWorker(QObject):
         star_magnitude_limit: float = 6.0,
         output_max_edge: int = 0,
         annotation_style: str = "automatic",
+        primary_subject: dict | None = None,
     ) -> None:
         super().__init__()
         self._cancel_event = Event()
@@ -63,6 +64,7 @@ class AnnotationWorker(QObject):
         self.star_magnitude_limit = float(star_magnitude_limit)
         self.output_max_edge = int(output_max_edge)
         self.annotation_style = annotation_style
+        self.primary_subject = primary_subject
 
     @Slot()
     def run(self) -> None:
@@ -151,6 +153,17 @@ class AnnotationWorker(QObject):
             else:
                 import shutil
                 shutil.copy2(self.image_path, self.output_path)
+
+            # Add the primary-subject title last, above annotations and grid.
+            if self.primary_subject and self.primary_subject.get("name"):
+                from .annotations import render_primary_subject_title
+                self._check_cancelled()
+                self.progress.emit("Adding primary subject title…")
+                render_primary_subject_title(
+                    self.output_path,
+                    self.primary_subject,
+                    self.output_path,
+                )
 
             # Export the final opaque annotation as RGB PNG, without alpha.
             if self.output_path.suffix.lower() == ".png":

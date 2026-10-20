@@ -853,3 +853,112 @@ def annotate_bright_stars(
         colour=colour,
     )
     return len(annotations)
+
+
+def render_primary_subject_title(
+    image_path: str | Path,
+    subject: dict,
+    output_path: str | Path,
+) -> None:
+    """Draw a discreet primary-subject title on an annotated image."""
+    image = QImage(str(image_path))
+    if image.isNull():
+        raise ValueError(f"Cannot open image: {image_path}")
+
+    image = image.convertToFormat(QImage.Format.Format_ARGB32)
+    name = str(subject.get("name") or "").strip()
+    if not name:
+        if not image.save(str(output_path)):
+            raise OSError(f"Cannot save image: {output_path}")
+        return
+
+    # Use familiar astronomical names for presentation titles.
+    friendly_names = {
+        "NGC 292": "Small Magellanic Cloud",
+        "NGC 0292": "Small Magellanic Cloud",
+        "NGC 224": "Andromeda Galaxy",
+        "NGC 0224": "Andromeda Galaxy",
+        "NGC 3372": "Carina Nebula",
+    }
+
+    catalogue_name = name
+    display_name = friendly_names.get(name.upper(), name)
+
+    details = []
+    if display_name != catalogue_name:
+        details.append(catalogue_name)
+
+    constellation = str(subject.get("constellation") or "").strip()
+    if constellation:
+        details.append(constellation)
+
+    subtitle = " · ".join(details)
+    name = display_name
+
+    painter = QPainter(image)
+    try:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+
+        scale = max(0.6, image.width() / 2000.0)
+        margin = 65 * scale
+        padding = 17 * scale
+        line_gap = 9 * scale
+
+        title_font = QFont("Helvetica")
+        title_font.setPixelSize(round(30 * scale))
+        title_font.setBold(True)
+
+        subtitle_font = QFont("Helvetica")
+        subtitle_font.setPixelSize(round(18 * scale))
+
+        painter.setFont(title_font)
+        title_metrics = painter.fontMetrics()
+        title_width = title_metrics.horizontalAdvance(name)
+
+        painter.setFont(subtitle_font)
+        subtitle_metrics = painter.fontMetrics()
+        subtitle_width = subtitle_metrics.horizontalAdvance(subtitle)
+
+        box_width = min(
+            image.width() - 2 * margin,
+            max(title_width, subtitle_width) + 2 * padding,
+        )
+        box_height = (
+            title_metrics.height()
+            + (subtitle_metrics.height() + line_gap if subtitle else 0)
+            + 2 * padding
+        )
+
+        x = image.width() - margin - box_width
+        y = margin
+
+        painter.fillRect(
+            QRectF(x, y, box_width, box_height),
+            QColor(0, 0, 0, 125),
+        )
+
+        text_x = x + padding
+        painter.setPen(QColor("#F2F5F7"))
+        painter.setFont(title_font)
+        painter.drawText(
+            QPointF(text_x, y + padding + title_metrics.ascent()),
+            name,
+        )
+
+        if subtitle:
+            painter.setPen(QColor("#C5D5DD"))
+            painter.setFont(subtitle_font)
+            painter.drawText(
+                QPointF(
+                    text_x,
+                    y + padding + title_metrics.height()
+                    + line_gap + subtitle_metrics.ascent(),
+                ),
+                subtitle,
+            )
+    finally:
+        painter.end()
+
+    if not image.save(str(output_path)):
+        raise OSError(f"Cannot save titled image: {output_path}")

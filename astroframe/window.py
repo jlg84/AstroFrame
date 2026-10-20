@@ -5660,6 +5660,10 @@ class MainWindow(QMainWindow):
         grid_check = QCheckBox("RA/Dec coordinate grid")
         options_layout.addWidget(grid_check)
 
+        subject_title_check = QCheckBox("Show primary subject title")
+        subject_title_check.setChecked(True)
+        options_layout.addWidget(subject_title_check)
+
         nebula_check = QCheckBox("Nebulae (OpenNGC)")
         options_layout.addWidget(nebula_check)
 
@@ -5858,6 +5862,11 @@ class MainWindow(QMainWindow):
             star_magnitude_limit=float(star_magnitude_combo.currentData()),
             output_max_edge=output_max_edge,
             annotation_style=annotation_style,
+            primary_subject=(
+                self._cached_target_for_current_image()
+                if subject_title_check.isChecked()
+                else None
+            ),
         )
         self.annotation_thread = thread
         self.annotation_worker = worker

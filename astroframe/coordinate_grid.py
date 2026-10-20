@@ -215,20 +215,25 @@ def render_coordinate_grid(
     try:
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
-        colour = QColor("#83CBE8")
-        colour.setAlpha(175)
+        # Distinguish the two celestial coordinate families.
+        axis_colours = {
+            "RA": "#D8A45D",   # Warm amber
+            "Dec": "#72B9CF",  # Cyan-blue
+        }
 
-        pen = QPen(colour)
+        pen = QPen()
         pen.setWidthF(max(1.0, image.width() / 1800))
-        painter.setPen(pen)
 
         for axis, value, path in paths:
+            colour = QColor(axis_colours[axis])
+            colour.setAlpha(115)
+            pen.setColor(colour)
+            painter.setPen(pen)
             painter.drawPath(path)
 
         painter.setClipping(False)
 
         painter.resetTransform()
-        painter.setPen(QColor("#DCEAF0"))
         font = painter.font()
         font.setPixelSize(max(14, round(border * 0.40)))
         painter.setFont(font)
@@ -237,6 +242,7 @@ def render_coordinate_grid(
         occupied_labels = []
 
         for axis, value, path in paths:
+            painter.setPen(QColor(axis_colours[axis]))
             label = format_grid_coordinate(axis, value)
             metrics = painter.fontMetrics()
             label_width = metrics.horizontalAdvance(label) + 12
