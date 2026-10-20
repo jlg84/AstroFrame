@@ -153,6 +153,11 @@ def render_annotated_image(
                 ),
             )
 
+            # Remember the preferred position so displaced labels
+            # can be connected back to their astronomical objects.
+            preferred_label_x = label_x
+            preferred_label_y = label_y
+
             # Keep the original position unless it collides with
             # a label already placed.
             def label_rectangle(x, y):
@@ -181,27 +186,79 @@ def render_annotated_image(
                 )
 
             if not position_is_clear(label_x, label_y):
-                candidates = [
-                    (annotation.x - left_extent - label_width - gap,
-                     annotation.y),
-                    (annotation.x + right_extent + gap,
-                     annotation.y - metrics.height() - gap),
-                    (annotation.x + right_extent + gap,
-                     annotation.y + metrics.height() + gap),
-                    (annotation.x - label_width / 2,
-                     annotation.y - max(
-                         left_extent, right_extent
-                     ) - gap),
-                    (annotation.x - label_width / 2,
-                     annotation.y + max(
-                         left_extent, right_extent
-                     ) + metrics.height() + gap),
-                ]
+                # Search progressively farther from the object,
+                # preferring nearby positions before distant ones.
+                candidates = []
+
+                for distance in (1, 2, 3, 4):
+                    offset = distance * (metrics.height() + 6 * scale)
+
+                    candidates.extend([
+                        (right_x, annotation.y - offset),
+                        (right_x, annotation.y + offset),
+                        (left_x, annotation.y - offset),
+                        (left_x, annotation.y + offset),
+                        (annotation.x - label_width / 2,
+                         annotation.y - offset),
+                        (annotation.x - label_width / 2,
+                         annotation.y + offset),
+                    ])
 
                 for candidate_x, candidate_y in candidates:
                     if position_is_clear(candidate_x, candidate_y):
                         label_x, label_y = candidate_x, candidate_y
                         break
+
+            # Keep the object marker even if no readable label
+            # position can be found.
+            if not position_is_clear(label_x, label_y):
+                continue
+
+            # Connect substantially displaced labels to their objects.
+            # Draw before the backing so the line never obscures text.
+            displacement = (
+                (label_x - preferred_label_x) ** 2
+                + (label_y - preferred_label_y) ** 2
+            ) ** 0.5
+
+            if displacement > 20 * scale:
+                text_rect = label_rectangle(label_x, label_y)
+
+                target_x = max(
+                    text_rect.left(),
+                    min(annotation.x, text_rect.right()),
+                )
+                target_y = max(
+                    text_rect.top(),
+                    min(annotation.y, text_rect.bottom()),
+                )
+
+                dx = target_x - annotation.x
+                dy = target_y - annotation.y
+                distance = (dx * dx + dy * dy) ** 0.5
+
+                if distance > 1:
+                    marker_radius = (
+                        max(left_extent, right_extent)
+                        if annotation.major_radius_px <= 0
+                        else 0
+                    )
+                    start_offset = min(marker_radius, distance * 0.5)
+
+                    start_x = annotation.x + dx * start_offset / distance
+                    start_y = annotation.y + dy * start_offset / distance
+
+                    painter.save()
+                    connector_colour = QColor(annotation_colour)
+                    connector_colour.setAlpha(110)
+                    connector_pen = QPen(connector_colour)
+                    connector_pen.setWidthF(0.8 * scale)
+                    painter.setPen(connector_pen)
+                    painter.drawLine(
+                        QPointF(start_x, start_y),
+                        QPointF(target_x, target_y),
+                    )
+                    painter.restore()
 
             # A translucent dark backing keeps labels readable.
             text_rect = label_rectangle(label_x, label_y)
