@@ -1,6 +1,6 @@
-# Installing AstroFrame 1.0.0 on macOS
+# Installing AstroFrame 1.1.0 on macOS
 
-AstroFrame 1.0.0 is distributed as a macOS disk image (DMG).
+AstroFrame 1.1.0 is distributed as a macOS disk image (DMG).
 
 ## Install
 
@@ -11,7 +11,7 @@ AstroFrame 1.0.0 is distributed as a macOS disk image (DMG).
 
 ## First-launch security notice
 
-AstroFrame 1.0.0 is not yet Developer ID signed and notarized. macOS may therefore refuse the first launch even when the package came directly from the AstroFrame project owner.
+AstroFrame 1.1.0 is not yet Developer ID signed and notarized. macOS may therefore refuse the first launch even when the package came directly from the AstroFrame project owner.
 
 Only override macOS security if you expected this AstroFrame build and received it from a source you trust. After attempting to open AstroFrame, macOS may offer **Open Anyway** under **System Settings → Privacy & Security**. Once approved, subsequent launches should behave normally.
 
@@ -20,6 +20,16 @@ The DMG is accompanied by a SHA-256 checksum file. You can use it to confirm tha
 ## Plate solving
 
 AstroFrame can use ASTAP for local plate solving. ASTAP is an external application and is not bundled inside AstroFrame. Install it separately if you want local solving. AstroFrame can also use Astrometry.net as a configured fallback.
+
+## Annotation catalogues
+
+AstroFrame 1.1 introduces **AstroFrame Annotate**, which exports labelled astronomical photographs using plate-solved image coordinates.
+
+- **Galaxies:** Galaxy labels and outlines require the HyperLEDA catalogue. AstroFrame looks for a local `hyperleda.csv`, including in supported ASTAP catalogue locations. HyperLEDA is not automatically downloaded. If it is unavailable, AstroFrame offers to continue with the other selected annotations.
+- **Other astronomical objects:** OpenNGC, Barnard dark nebulae, Yale bright stars and Bica catalogue data are downloaded and cached when needed. Internet access may be required the first time these features are used.
+- **Coordinate grids:** These use the image's plate-solving information and do not require HyperLEDA.
+
+ASTAP's star database, such as D50, is separate from HyperLEDA. Installing a star database does not by itself provide galaxy annotations.
 
 ## First run
 

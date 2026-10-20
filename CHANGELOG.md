@@ -2,6 +2,34 @@
 
 This changelog records major public-development milestones. The many intermediate release-candidate builds were iterative development snapshots rather than separate public releases.
 
+## 1.1.0 — In preparation
+
+### AstroFrame Annotate
+
+- Export annotated astrophotographs using plate-solved image coordinates.
+- Add galaxy labels, outlines and detailed galaxy identification using HyperLEDA.
+- Overlay celestial coordinate grids.
+- Annotate nebulae, planetary nebulae, open and globular clusters using OpenNGC.
+- Identify Barnard dark nebulae and Yale bright stars.
+- Include Bica Magellanic Cloud catalogue objects.
+- Display objects from imported observing collections.
+- Add subject titles and configurable annotation styles.
+- Save separate Atlas and Presentation annotation presets.
+- Improve annotation placement, label collision avoidance and catalogue-position validation.
+- Allow annotation exports to continue without galaxies when HyperLEDA is unavailable.
+
+### Reliability
+
+- Improve solved-image cache identification and legacy cache migration.
+- Refine matching of extended catalogue objects to small image fields.
+- Expand and stabilise the automated regression tests.
+
+### Catalogue requirements
+
+- HyperLEDA is required for galaxy annotations and is not automatically downloaded.
+- OpenNGC, Barnard, Yale and Bica catalogue data are downloaded and cached when needed.
+- Internet access may be required when using these catalogues for the first time.
+
 ## 1.0.0 — 2026-08-17
 
 First public desktop release.
