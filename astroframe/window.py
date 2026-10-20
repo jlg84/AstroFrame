@@ -5651,6 +5651,15 @@ class MainWindow(QMainWindow):
         options_dialog = QDialog(self)
         options_dialog.setWindowTitle("Annotate Image")
         options_layout = QVBoxLayout(options_dialog)
+
+        preset_label = QLabel("Annotation preset")
+        options_layout.addWidget(preset_label)
+        preset_combo = QComboBox()
+        preset_combo.addItem("Presentation", "presentation")
+        preset_combo.addItem("Atlas", "atlas")
+        preset_combo.addItem("Custom", "custom")
+        options_layout.addWidget(preset_combo)
+
         select_all_check = QCheckBox("Select all object types")
         options_layout.addWidget(select_all_check)
 
@@ -5755,6 +5764,175 @@ class MainWindow(QMainWindow):
         style_combo.setCurrentIndex(max(0, style_index))
         options_layout.addWidget(style_combo)
 
+        # Each annotation preset has its own persistent configuration.
+        import json
+
+        def annotation_preset_settings_key(preset):
+            return f"annotationPreset/{preset}"
+
+        def load_annotation_preset(preset):
+            raw = self.settings.value(
+                annotation_preset_settings_key(preset), ""
+            )
+            if not raw:
+                return None
+            try:
+                data = json.loads(raw)
+                return data if isinstance(data, dict) else None
+            except (TypeError, ValueError):
+                return None
+
+        def save_annotation_preset(preset, data):
+            self.settings.setValue(
+                annotation_preset_settings_key(preset),
+                json.dumps(data),
+            )
+
+        def capture_annotation_configuration():
+            return {
+                "galaxies": galaxies_check.isChecked(),
+                "grid": grid_check.isChecked(),
+                "subject_title": subject_title_check.isChecked(),
+                "nebulae": nebula_check.isChecked(),
+                "clusters": cluster_check.isChecked(),
+                "planetary": planetary_check.isChecked(),
+                "open_clusters": open_cluster_check.isChecked(),
+                "globular": globular_check.isChecked(),
+                "dark_nebulae": dark_nebula_check.isChecked(),
+                "bright_stars": bright_stars_check.isChecked(),
+                "star_magnitude": float(star_magnitude_combo.currentData()),
+                "style": str(style_combo.currentData()),
+            }
+
+        def restore_annotation_configuration(data):
+            if not isinstance(data, dict):
+                return
+
+            checkbox_settings = (
+                ("galaxies", galaxies_check),
+                ("grid", grid_check),
+                ("subject_title", subject_title_check),
+                ("nebulae", nebula_check),
+                ("clusters", cluster_check),
+                ("planetary", planetary_check),
+                ("open_clusters", open_cluster_check),
+                ("globular", globular_check),
+                ("dark_nebulae", dark_nebula_check),
+                ("bright_stars", bright_stars_check),
+            )
+
+            for key, checkbox in checkbox_settings:
+                if isinstance(data.get(key), bool):
+                    checkbox.setChecked(data[key])
+
+            if "star_magnitude" in data:
+                index = star_magnitude_combo.findData(
+                    data["star_magnitude"]
+                )
+                if index >= 0:
+                    star_magnitude_combo.setCurrentIndex(index)
+
+            if "style" in data:
+                index = style_combo.findData(data["style"])
+                if index >= 0:
+                    style_combo.setCurrentIndex(index)
+
+        # Keep separate working configurations for each preset.
+        preset_updating = False
+        active_preset = "presentation"
+        working_configs = {}
+
+        def default_annotation_configuration(preset):
+            atlas = preset == "atlas"
+            return {
+                "galaxies": True,
+                "grid": atlas,
+                "subject_title": True,
+                "nebulae": True,
+                "clusters": atlas,
+                "planetary": atlas,
+                "open_clusters": atlas,
+                "globular": atlas,
+                "dark_nebulae": atlas,
+                "bright_stars": atlas,
+                "star_magnitude": 6.0,
+                "style": "outlines" if atlas else "automatic",
+            }
+
+        for preset in ("presentation", "atlas"):
+            working_configs[preset] = (
+                load_annotation_preset(preset)
+                or default_annotation_configuration(preset)
+            )
+
+        def apply_annotation_preset(index):
+            nonlocal preset_updating, active_preset
+            preset = preset_combo.itemData(index)
+            if preset not in ("presentation", "atlas"):
+                return
+
+            if not preset_updating:
+                working_configs[active_preset] = (
+                    capture_annotation_configuration()
+                )
+
+            active_preset = preset
+            preset_updating = True
+            try:
+                restore_annotation_configuration(
+                    working_configs[preset]
+                )
+            finally:
+                preset_updating = False
+
+        def mark_annotation_custom(*args):
+            if preset_updating:
+                return
+
+            working_configs[active_preset] = (
+                capture_annotation_configuration()
+            )
+            preset_combo.blockSignals(True)
+            try:
+                preset_combo.setCurrentIndex(
+                    preset_combo.findData("custom")
+                )
+            finally:
+                preset_combo.blockSignals(False)
+
+        preset_combo.currentIndexChanged.connect(apply_annotation_preset)
+
+        for checkbox in (
+            *object_checks,
+            grid_check,
+            subject_title_check,
+        ):
+            checkbox.toggled.connect(mark_annotation_custom)
+
+        style_combo.currentIndexChanged.connect(mark_annotation_custom)
+        star_magnitude_combo.currentIndexChanged.connect(mark_annotation_custom)
+
+        # Restore the last-used preset without overwriting its settings.
+        saved_preset = str(
+            self.settings.value(
+                "annotationLastPreset", "presentation"
+            )
+        )
+        if saved_preset not in ("presentation", "atlas"):
+            saved_preset = "presentation"
+
+        active_preset = saved_preset
+        preset_updating = True
+        try:
+            restore_annotation_configuration(
+                working_configs[saved_preset]
+            )
+            preset_combo.setCurrentIndex(
+                preset_combo.findData(saved_preset)
+            )
+        finally:
+            preset_updating = False
+
         options_buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel
@@ -5767,6 +5945,7 @@ class MainWindow(QMainWindow):
             ok_button.setEnabled(
                 galaxies_check.isChecked()
                 or grid_check.isChecked()
+                or subject_title_check.isChecked()
                 or nebula_check.isChecked()
                 or cluster_check.isChecked()
                 or planetary_check.isChecked()
@@ -5778,6 +5957,7 @@ class MainWindow(QMainWindow):
 
         galaxies_check.toggled.connect(update_annotation_ok)
         grid_check.toggled.connect(update_annotation_ok)
+        subject_title_check.toggled.connect(update_annotation_ok)
         nebula_check.toggled.connect(update_annotation_ok)
         cluster_check.toggled.connect(update_annotation_ok)
         planetary_check.toggled.connect(update_annotation_ok)
@@ -5788,6 +5968,12 @@ class MainWindow(QMainWindow):
         update_annotation_ok()
         if options_dialog.exec() != QDialog.DialogCode.Accepted:
             return
+
+        # Save both preset configurations only when OK is clicked.
+        working_configs[active_preset] = capture_annotation_configuration()
+        for preset in ("presentation", "atlas"):
+            save_annotation_preset(preset, working_configs[preset])
+        self.settings.setValue("annotationLastPreset", active_preset)
 
 
         catalogue = find_galaxy_catalogue()
