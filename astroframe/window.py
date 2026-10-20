@@ -5699,6 +5699,9 @@ class MainWindow(QMainWindow):
         dark_nebula_check = QCheckBox("Dark nebulae (Barnard catalogue)")
         options_layout.addWidget(dark_nebula_check)
 
+        imported_collections_check = QCheckBox("Imported collection objects")
+        options_layout.addWidget(imported_collections_check)
+
         bright_stars_check = QCheckBox("Bright stars (Yale Bright Star Catalogue)")
         options_layout.addWidget(bright_stars_check)
 
@@ -5730,6 +5733,7 @@ class MainWindow(QMainWindow):
             open_cluster_check,
             globular_check,
             dark_nebula_check,
+            imported_collections_check,
             bright_stars_check,
         )
 
@@ -5808,6 +5812,7 @@ class MainWindow(QMainWindow):
                 "open_clusters": open_cluster_check.isChecked(),
                 "globular": globular_check.isChecked(),
                 "dark_nebulae": dark_nebula_check.isChecked(),
+                "imported_collections": imported_collections_check.isChecked(),
                 "bright_stars": bright_stars_check.isChecked(),
                 "star_magnitude": float(star_magnitude_combo.currentData()),
                 "style": str(style_combo.currentData()),
@@ -5828,6 +5833,7 @@ class MainWindow(QMainWindow):
                 ("open_clusters", open_cluster_check),
                 ("globular", globular_check),
                 ("dark_nebulae", dark_nebula_check),
+                ("imported_collections", imported_collections_check),
                 ("bright_stars", bright_stars_check),
             )
 
@@ -5865,16 +5871,17 @@ class MainWindow(QMainWindow):
                 "open_clusters": atlas,
                 "globular": atlas,
                 "dark_nebulae": atlas,
+                "imported_collections": atlas,
                 "bright_stars": atlas,
                 "star_magnitude": 6.0,
                 "style": "outlines" if atlas else "automatic",
             }
 
         for preset in ("presentation", "atlas"):
-            working_configs[preset] = (
-                load_annotation_preset(preset)
-                or default_annotation_configuration(preset)
-            )
+            working_configs[preset] = {
+                **default_annotation_configuration(preset),
+                **(load_annotation_preset(preset) or {}),
+            }
 
         def apply_annotation_preset(index):
             nonlocal preset_updating, active_preset
@@ -6080,11 +6087,9 @@ class MainWindow(QMainWindow):
             output_max_edge=output_max_edge,
             annotation_style=annotation_style,
             show_outlines=outlines_check.isChecked(),
-            primary_subject=(
-                self._cached_target_for_current_image()
-                if subject_title_check.isChecked()
-                else None
-            ),
+            include_imported_collections=imported_collections_check.isChecked(),
+            primary_subject=self._cached_target_for_current_image(),
+            show_subject_title=subject_title_check.isChecked(),
         )
         self.annotation_thread = thread
         self.annotation_worker = worker

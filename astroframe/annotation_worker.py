@@ -45,7 +45,9 @@ class AnnotationWorker(QObject):
         output_max_edge: int = 0,
         annotation_style: str = "automatic",
         show_outlines: bool = True,
+        include_imported_collections: bool = False,
         primary_subject: dict | None = None,
+        show_subject_title: bool = True,
     ) -> None:
         super().__init__()
         self._cancel_event = Event()
@@ -66,7 +68,71 @@ class AnnotationWorker(QObject):
         self.output_max_edge = int(output_max_edge)
         self.annotation_style = annotation_style
         self.show_outlines = show_outlines
+        self.include_imported_collections = include_imported_collections
         self.primary_subject = primary_subject
+        self.show_subject_title = show_subject_title
+
+    def _collect_imported_annotations(self):
+        """Collect marker-only annotations from imported target collections."""
+        from .knowledge import KnowledgeStore
+        from .annotations import Annotation, image_dimensions, sky_to_pixel
+        from astropy.coordinates import SkyCoord
+        import astropy.units as u
+
+        store = KnowledgeStore()
+        width, height = image_dimensions(self.image_path)
+
+        from astropy.wcs import WCS
+        from astropy.io import fits
+
+        with fits.open(self.wcs_path) as hdul:
+            wcs = WCS(hdul[0].header).celestial
+
+        centre_x = (width - 1) / 2
+        centre_y = (height - 1) / 2
+        centre_ra, centre_dec = wcs.all_pix2world(
+            [[centre_x, height - 1 - centre_y]], 0
+        )[0]
+
+        # Broad candidate search; exact inclusion is checked in pixels.
+        matches = store.entries_near_position(
+            float(centre_ra), float(centre_dec), 5.0
+        )
+
+        results = []
+        seen = set()
+        for target, collection, entry, distance in matches:
+            self._check_cancelled()
+            if target.id in seen:
+                continue
+            seen.add(target.id)
+
+            try:
+                x, y = sky_to_pixel(
+                    self.wcs_path,
+                    target.ra_deg,
+                    target.dec_deg,
+                    image_height=height,
+                )
+            except (ValueError, KeyError, ZeroDivisionError):
+                continue
+
+            if not (0 <= x < width and 0 <= y < height):
+                continue
+
+            results.append(Annotation(
+                name=target.canonical_name,
+                x=x,
+                y=y,
+                colour="#E2C17A",
+                prefer_marker=True,
+            ))
+
+        self.progress.emit(
+            "Imported collection objects inside image: "
+            + (", ".join(item.name for item in results) if results else "none")
+        )
+        return results
 
     @Slot()
     def run(self) -> None:
@@ -129,6 +195,35 @@ class AnnotationWorker(QObject):
 
             self._check_cancelled()
 
+            if self.include_imported_collections:
+                import re
+
+                def object_key(name):
+                    text = str(name or "").upper().strip()
+                    match = re.search(
+                        r"(?<![A-Z0-9])(NGC|IC|HR|M)\s*0*(\d+)(?!\d)",
+                        text,
+                    )
+                    if match:
+                        return f"{match.group(1)}{int(match.group(2))}"
+                    return re.sub(r"[^A-Z0-9]", "", text)
+
+                existing = {object_key(item.name) for item in annotations}
+                if self.primary_subject:
+                    existing.add(object_key(self.primary_subject.get("name")))
+
+                self.progress.emit("Collecting imported collection objects…")
+                imported_added = 0
+                for item in self._collect_imported_annotations():
+                    key = object_key(item.name)
+                    if key and key not in existing:
+                        annotations.append(item)
+                        existing.add(key)
+                        imported_added += 1
+                self.progress.emit(
+                    f"Imported collections added {imported_added} new annotations."
+                )
+
             # Avoid duplicating the titled primary subject in the catalogue
             # annotations. Normalize spacing and leading zeros in IDs.
             if self.primary_subject and self.primary_subject.get("name"):
@@ -189,7 +284,11 @@ class AnnotationWorker(QObject):
                 shutil.copy2(self.image_path, self.output_path)
 
             # Add the primary-subject title last, above annotations and grid.
-            if self.primary_subject and self.primary_subject.get("name"):
+            if (
+                self.show_subject_title
+                and self.primary_subject
+                and self.primary_subject.get("name")
+            ):
                 from .annotations import render_primary_subject_title
                 self._check_cancelled()
                 self.progress.emit("Adding primary subject title…")
