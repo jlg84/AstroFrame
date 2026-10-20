@@ -7896,6 +7896,22 @@ class MainWindow(QMainWindow):
         if not target_info or not target_info.get("name"):
             return True
         source = target_info.get("identification_source")
+
+        # A solver clue is not proof of the photographed subject. Reject
+        # cached identifications whose coordinates are outside the solved
+        # image, regardless of how the identification was originally made.
+        ra = target_info.get("subject_ra_deg")
+        dec = target_info.get("subject_dec_deg")
+        if ra is not None and dec is not None and self.current_solution is not None:
+            try:
+                subject_coord = SkyCoord(
+                    ra=float(ra), dec=float(dec), unit=("deg", "deg")
+                )
+                if not self._coord_is_inside_solution(subject_coord, self.current_solution):
+                    return True
+            except (TypeError, ValueError):
+                return True
+
         if source == "user_hint":
             return False
 
@@ -8121,15 +8137,9 @@ class MainWindow(QMainWindow):
 
         target_info = self._cached_target_for_current_image() if cached else None
         identify_after_render = False
-        if self.solving_hint_name:
-            target_info = {
-                "name": self.solving_hint_name,
-                "identification_source": "user_hint",
-                "identification_version": self.SUBJECT_IDENTIFICATION_VERSION,
-            }
-            if self.current_image_path:
-                self.solve_cache.update_metadata(self.current_image_path, target=target_info)
-        elif self._target_needs_identification(target_info):
+        # Solver clues assist astrometry; they are not independently verified
+        # identifications of the photographic subject.
+        if self._target_needs_identification(target_info):
             identify_after_render = True
             self.summary_target.setText("Target\nIdentifying…")
         else:
