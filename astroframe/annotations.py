@@ -86,10 +86,7 @@ def render_annotated_image(
                 and annotation.minor_radius_px > 0
                 and (annotation_style == "outlines" or not ellipse_is_oversized)
                 and annotation_style != "markers"
-                and not (
-                    annotation_style == "automatic"
-                    and annotation.prefer_marker
-                )
+                and not annotation.prefer_marker
             ):
                 # Draw the catalogue ellipse in image coordinates.
                 painter.save()
@@ -112,8 +109,15 @@ def render_annotated_image(
                 left_extent = right_extent
                 label_x = annotation.x + right_extent + 12 * scale
             else:
-                # Retain the original marker for objects without dimensions.
-                radius = 12.0 * scale
+                # Use discreet markers for tiny catalogue galaxies.
+                # Other object types retain their original marker size.
+                tiny_galaxy = (
+                    annotation.prefer_marker
+                    and annotation.major_radius_px > 0
+                    and annotation.major_radius_px < 4.0
+                    and annotation.minor_radius_px > 0
+                )
+                radius = (3.5 if tiny_galaxy else 12.0) * scale
                 painter.drawEllipse(centre, radius, radius)
                 left_extent = radius
                 right_extent = radius

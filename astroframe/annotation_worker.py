@@ -33,6 +33,7 @@ class AnnotationWorker(QObject):
         output_path: str | Path,
         *,
         include_galaxies: bool = True,
+        galaxy_detail: str = "featured",
         include_grid: bool = False,
         include_nebulae: bool = False,
         include_clusters: bool = False,
@@ -58,6 +59,10 @@ class AnnotationWorker(QObject):
         self.catalogue_path = Path(catalogue_path) if catalogue_path is not None else None
         self.output_path = Path(output_path)
         self.include_galaxies = include_galaxies
+        self.galaxy_detail = (
+            galaxy_detail if galaxy_detail in ("featured", "detailed")
+            else "featured"
+        )
         self.include_grid = include_grid
         self.include_nebulae = include_nebulae
         self.include_clusters = include_clusters
@@ -291,11 +296,63 @@ class AnnotationWorker(QObject):
             annotations = []
             if needs_galaxies:
                 self.progress.emit("Collecting galaxy annotations…")
-                annotations.extend(annotate_galaxies(
+                galaxy_annotations = annotate_galaxies(
                     self.image_path, self.wcs_path, self.catalogue_path,
                     self.output_path, progress=self.progress.emit,
                     collect_only=True,
-                ))
+                    min_major_arcmin=(
+                        0.3 if self.galaxy_detail == "detailed" else 1.0
+                    ),
+                )
+
+                if self.galaxy_detail == "detailed":
+                    width, height = image_dimensions(self.image_path)
+                    cells = {}
+
+                    # Distribute galaxies across the image, prioritising
+                    # larger objects within each region.
+                    for item in galaxy_annotations:
+                        col = min(5, max(0, int(item.x * 6 / width)))
+                        row = min(3, max(0, int(item.y * 4 / height)))
+                        cells.setdefault((row, col), []).append(item)
+
+                    for group in cells.values():
+                        group.sort(
+                            key=lambda item: item.major_arcmin,
+                            reverse=True,
+                        )
+
+                    selected = []
+                    maximum = max(
+                        (len(group) for group in cells.values()),
+                        default=0,
+                    )
+
+                    for index in range(maximum):
+                        self._check_cancelled()
+                        for cell in sorted(cells):
+                            if index < len(cells[cell]):
+                                selected.append(cells[cell][index])
+                                if len(selected) >= 100:
+                                    break
+                        if len(selected) >= 100:
+                            break
+
+                    self.progress.emit(
+                        f"Detailed galaxies: selected {len(selected)} "
+                        f"of {len(galaxy_annotations)} candidates."
+                    )
+                    # Tiny galaxies are clearer as identification markers.
+                    from dataclasses import replace
+
+                    galaxy_annotations = [
+                        replace(item, prefer_marker=True)
+                        if item.major_radius_px < 4.0
+                        else item
+                        for item in selected
+                    ]
+
+                annotations.extend(galaxy_annotations)
 
             for mode in selected_modes:
                 self.progress.emit(f"Collecting OpenNGC {mode}…")

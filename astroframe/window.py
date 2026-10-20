@@ -5669,6 +5669,29 @@ class MainWindow(QMainWindow):
         galaxies_check = QCheckBox("Galaxies")
         galaxies_check.setChecked(True)
         options_layout.addWidget(galaxies_check)
+
+        galaxy_detail_label = QLabel("Galaxy annotation detail")
+        options_layout.addWidget(galaxy_detail_label)
+
+        galaxy_detail_combo = QComboBox()
+        galaxy_detail_combo.addItem(
+            "Featured (1.0′ minimum)", "featured"
+        )
+        galaxy_detail_combo.addItem(
+            "Detailed (0.3′ minimum, up to 100)", "detailed"
+        )
+        options_layout.addWidget(galaxy_detail_combo)
+
+        galaxy_detail_label.setEnabled(False)
+        galaxy_detail_combo.setEnabled(False)
+
+        def update_galaxy_detail_enabled(checked):
+            galaxy_detail_label.setEnabled(checked)
+            galaxy_detail_combo.setEnabled(checked)
+
+        galaxies_check.toggled.connect(update_galaxy_detail_enabled)
+        update_galaxy_detail_enabled(galaxies_check.isChecked())
+
         grid_check = QCheckBox("RA/Dec coordinate grid")
         options_layout.addWidget(grid_check)
 
@@ -5823,6 +5846,7 @@ class MainWindow(QMainWindow):
         def capture_annotation_configuration():
             return {
                 "galaxies": galaxies_check.isChecked(),
+                "galaxy_detail": str(galaxy_detail_combo.currentData()),
                 "grid": grid_check.isChecked(),
                 "show_outlines": outlines_check.isChecked(),
                 "subject_title": subject_title_check.isChecked(),
@@ -5864,6 +5888,11 @@ class MainWindow(QMainWindow):
                 if isinstance(data.get(key), bool):
                     checkbox.setChecked(data[key])
 
+            if "galaxy_detail" in data:
+                index = galaxy_detail_combo.findData(data["galaxy_detail"])
+                if index >= 0:
+                    galaxy_detail_combo.setCurrentIndex(index)
+
             if "bica_detail" in data:
                 index = bica_detail_combo.findData(data["bica_detail"])
                 if index >= 0:
@@ -5890,6 +5919,7 @@ class MainWindow(QMainWindow):
             atlas = preset == "atlas"
             return {
                 "galaxies": True,
+                "galaxy_detail": "featured",
                 "grid": atlas,
                 "show_outlines": True,
                 "subject_title": True,
@@ -5977,6 +6007,7 @@ class MainWindow(QMainWindow):
         ):
             checkbox.toggled.connect(mark_annotation_custom)
 
+        galaxy_detail_combo.currentIndexChanged.connect(mark_annotation_custom)
         bica_detail_combo.currentIndexChanged.connect(mark_annotation_custom)
         style_combo.currentIndexChanged.connect(mark_annotation_custom)
         star_magnitude_combo.currentIndexChanged.connect(mark_annotation_custom)
@@ -6106,6 +6137,7 @@ class MainWindow(QMainWindow):
             catalogue,
             output,
             include_galaxies=galaxies_check.isChecked(),
+            galaxy_detail=str(galaxy_detail_combo.currentData()),
             include_grid=grid_check.isChecked(),
             include_nebulae=nebula_check.isChecked(),
             include_clusters=cluster_check.isChecked(),
