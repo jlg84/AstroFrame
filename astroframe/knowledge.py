@@ -446,7 +446,16 @@ class KnowledgeStore:
                 # plate solution orientation used by AstroFrame's overlay.
                 x = east * c + north * sn
                 y = -east * sn + north * c
-                extent = 0.5 * max(target.angular_width_deg or 0.0, target.angular_height_deg or 0.0)
+                # Permit meaningful overlap by extended objects, but do not
+                # let an enormous catalogue region claim a tiny image merely
+                # because its nominal boundaries extend across the field.
+                extent = min(
+                    0.5 * max(
+                        target.angular_width_deg or 0.0,
+                        target.angular_height_deg or 0.0,
+                    ),
+                    min(half_w, half_h),
+                )
                 if abs(x) <= half_w + extent and abs(y) <= half_h + extent:
                     matches.append((target, collection, entry, sep))
         matches.sort(key=lambda item: item[3])

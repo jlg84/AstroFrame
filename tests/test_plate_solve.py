@@ -44,8 +44,10 @@ def test_submission_cache_uses_content_not_filename(tmp_path: Path) -> None:
     assert cache.reserve_upload(second) is False
 
 
-def test_old_wcs_cache_schema_is_rejected(tmp_path: Path) -> None:
+def test_old_wcs_cache_schema_is_migrated(tmp_path: Path) -> None:
     import json
+    from astroframe.plate_solve import SOLVE_CACHE_SCHEMA_VERSION
+
     image = tmp_path / "image.jpg"
     image.write_bytes(b"same exact image")
     cache = SolveCache(tmp_path / "cache")
@@ -59,4 +61,29 @@ def test_old_wcs_cache_schema_is_rejected(tmp_path: Path) -> None:
     data = json.loads(path.read_text())
     data["schema_version"] = 2
     path.write_text(json.dumps(data))
+
+    assert cache.load(image, expected_size=(1000, 500)) == solution
+
+    migrated = json.loads(path.read_text())
+    assert migrated["schema_version"] == SOLVE_CACHE_SCHEMA_VERSION
+    assert migrated["image_sha256"] == cache.image_hash(image)
+
+
+def test_wcs_cache_rejects_invalid_fingerprint(tmp_path: Path) -> None:
+    import json
+
+    image = tmp_path / "image.jpg"
+    image.write_bytes(b"same exact image")
+    cache = SolveCache(tmp_path / "cache")
+    solution = PlateSolution(
+        ra_deg=10.0, dec_deg=-20.0, pixel_scale_arcsec=2.0,
+        orientation_deg=0.0, parity=1.0, radius_deg=1.0,
+        image_width_deg=2.0, image_height_deg=1.0,
+    )
+    cache.save(image, solution, image_size_px=(1000, 500))
+    path = cache._path_for(image)
+    data = json.loads(path.read_text())
+    data["image_sha256"] = "incorrect-fingerprint"
+    path.write_text(json.dumps(data))
+
     assert cache.load(image, expected_size=(1000, 500)) is None

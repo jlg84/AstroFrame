@@ -6077,11 +6077,21 @@ class MainWindow(QMainWindow):
 
 
         catalogue = find_galaxy_catalogue()
-        if galaxies_check.isChecked() and catalogue is None:
-            QMessageBox.warning(
-                self, "Catalogue unavailable", "HyperLEDA was not found."
+        include_galaxies = galaxies_check.isChecked()
+        if include_galaxies and catalogue is None:
+            choice = QMessageBox.question(
+                self,
+                "Galaxy catalogue unavailable",
+                "AstroFrame could not find the HyperLEDA galaxy catalogue.\n\n"
+                "HyperLEDA is required for galaxy outlines and labels. "
+                "It can be installed as part of the ASTAP catalogue data.\n\n"
+                "Would you like to continue with the other selected annotations?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes,
             )
-            return
+            if choice != QMessageBox.StandardButton.Yes:
+                return
+            include_galaxies = False
 
         suggested = source.with_name(source.stem + "-Annotated.png")
         selected, _ = QFileDialog.getSaveFileName(
@@ -6117,7 +6127,7 @@ class MainWindow(QMainWindow):
         )
         self.annotation_grid_only = (
             grid_check.isChecked()
-            and not galaxies_check.isChecked()
+            and not include_galaxies
             and not selected_openngc
         )
         self.annotation_has_catalogue_objects = selected_openngc
@@ -6136,7 +6146,7 @@ class MainWindow(QMainWindow):
             wcs,
             catalogue,
             output,
-            include_galaxies=galaxies_check.isChecked(),
+            include_galaxies=include_galaxies,
             galaxy_detail=str(galaxy_detail_combo.currentData()),
             include_grid=grid_check.isChecked(),
             include_nebulae=nebula_check.isChecked(),
