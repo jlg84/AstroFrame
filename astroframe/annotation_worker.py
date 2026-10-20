@@ -139,6 +139,13 @@ class AnnotationWorker(QObject):
                     match = re.fullmatch(
                         r"(NGC|IC|M)\s*0*(\d+)", text
                     )
+                    if not match:
+                        # Also recognise identifiers in descriptive labels,
+                        # such as "Carina Nebula (NGC 3372)".
+                        match = re.search(
+                            r"(?<![A-Z0-9])(NGC|IC|M)\s*0*(\d+)(?!\d)",
+                            text,
+                        )
                     if match:
                         return f"{match.group(1)}{int(match.group(2))}"
                     return " ".join(text.split())
