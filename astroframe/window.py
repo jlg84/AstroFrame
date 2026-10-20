@@ -5646,7 +5646,7 @@ class MainWindow(QMainWindow):
         grid_check = QCheckBox("RA/Dec coordinate grid")
         options_layout.addWidget(grid_check)
 
-        nebula_check = QCheckBox("Nebulae (Bica catalogue)")
+        nebula_check = QCheckBox("Nebulae (OpenNGC)")
         options_layout.addWidget(nebula_check)
 
         cluster_check = QCheckBox("Other star clusters (OpenNGC)")
@@ -5660,6 +5660,13 @@ class MainWindow(QMainWindow):
 
         globular_check = QCheckBox("Globular clusters")
         options_layout.addWidget(globular_check)
+
+        dark_nebula_check = QCheckBox("Dark nebulae (Barnard catalogue)")
+        options_layout.addWidget(dark_nebula_check)
+
+        bright_stars_check = QCheckBox("Bright stars (coming soon)")
+        bright_stars_check.setEnabled(False)
+        options_layout.addWidget(bright_stars_check)
 
         # Output resolution for the finished annotated image.
         output_size_label = QLabel("Output image size")
@@ -5684,14 +5691,6 @@ class MainWindow(QMainWindow):
         style_combo.setCurrentIndex(max(0, style_index))
         options_layout.addWidget(style_combo)
 
-        for category in (
-            "Dark nebulae",
-            "Bright stars",
-        ):
-            checkbox = QCheckBox(category + " (coming soon)")
-            checkbox.setEnabled(False)
-            options_layout.addWidget(checkbox)
-
         options_buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
             | QDialogButtonBox.StandardButton.Cancel
@@ -5709,6 +5708,7 @@ class MainWindow(QMainWindow):
                 or planetary_check.isChecked()
                 or open_cluster_check.isChecked()
                 or globular_check.isChecked()
+                or dark_nebula_check.isChecked()
             )
 
         galaxies_check.toggled.connect(update_annotation_ok)
@@ -5718,6 +5718,7 @@ class MainWindow(QMainWindow):
         planetary_check.toggled.connect(update_annotation_ok)
         open_cluster_check.toggled.connect(update_annotation_ok)
         globular_check.toggled.connect(update_annotation_ok)
+        dark_nebula_check.toggled.connect(update_annotation_ok)
         update_annotation_ok()
         if options_dialog.exec() != QDialog.DialogCode.Accepted:
             return
@@ -5786,6 +5787,7 @@ class MainWindow(QMainWindow):
             include_planetary_nebulae=planetary_check.isChecked(),
             include_open_clusters=open_cluster_check.isChecked(),
             include_globular_clusters=globular_check.isChecked(),
+            include_dark_nebulae=dark_nebula_check.isChecked(),
             output_max_edge=output_max_edge,
             annotation_style=annotation_style,
         )
@@ -5810,7 +5812,7 @@ class MainWindow(QMainWindow):
     @Slot(int, str)
     def _annotation_succeeded(self, count: int, output_path: str) -> None:
         self._append_solver_log(
-            f"Annotation complete: {count} galaxies — {output_path}"
+            f"Annotation complete: {count} objects — {output_path}"
         )
 
         dialog = QMessageBox(self)
@@ -5827,7 +5829,8 @@ class MainWindow(QMainWindow):
         open_button = dialog.addButton(
             "Open Folder", QMessageBox.ButtonRole.ActionRole
         )
-        dialog.addButton(QMessageBox.StandardButton.Ok)
+        ok_button = dialog.addButton(QMessageBox.StandardButton.Ok)
+        dialog.setEscapeButton(ok_button)
         dialog.exec()
 
         if dialog.clickedButton() == open_button:

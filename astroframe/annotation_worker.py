@@ -5,7 +5,7 @@ from tempfile import TemporaryDirectory
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from .annotations import annotate_galaxies, annotate_openngc_objects
+from .annotations import annotate_galaxies, annotate_openngc_objects, annotate_barnard_objects
 from .coordinate_grid import render_coordinate_grid
 
 
@@ -29,6 +29,7 @@ class AnnotationWorker(QObject):
         include_planetary_nebulae: bool = False,
         include_open_clusters: bool = False,
         include_globular_clusters: bool = False,
+        include_dark_nebulae: bool = False,
         output_max_edge: int = 0,
         annotation_style: str = "automatic",
     ) -> None:
@@ -44,6 +45,7 @@ class AnnotationWorker(QObject):
         self.include_planetary_nebulae = include_planetary_nebulae
         self.include_open_clusters = include_open_clusters
         self.include_globular_clusters = include_globular_clusters
+        self.include_dark_nebulae = include_dark_nebulae
         self.output_max_edge = int(output_max_edge)
         self.annotation_style = annotation_style
 
@@ -85,6 +87,14 @@ class AnnotationWorker(QObject):
                 annotations.extend(annotate_openngc_objects(
                     self.image_path, self.wcs_path, self.output_path,
                     mode=mode, progress=self.progress.emit,
+                    collect_only=True,
+                ))
+
+            if self.include_dark_nebulae:
+                self.progress.emit("Collecting Barnard dark nebulae…")
+                annotations.extend(annotate_barnard_objects(
+                    self.image_path, self.wcs_path, self.output_path,
+                    progress=self.progress.emit,
                     collect_only=True,
                 ))
 

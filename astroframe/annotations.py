@@ -27,6 +27,7 @@ class Annotation:
     minor_radius_px: float = 0.0
     image_angle_deg: float = 0.0
     colour: str | None = None
+    prefer_marker: bool = False
 
 
 def render_annotated_image(
@@ -80,6 +81,10 @@ def render_annotated_image(
                 and annotation.minor_radius_px > 0
                 and (annotation_style == "outlines" or not ellipse_is_oversized)
                 and annotation_style != "markers"
+                and not (
+                    annotation_style == "automatic"
+                    and annotation.prefer_marker
+                )
             ):
                 # Draw the catalogue ellipse in image coordinates.
                 painter.save()
@@ -606,4 +611,110 @@ def annotate_galaxies(
         colour=colour,
     )
 
+    return len(annotations)
+
+
+def annotate_barnard_objects(
+    image_path: str | Path,
+    wcs_path: str | Path,
+    output_path: str | Path,
+    *,
+    colour: str = "#D9B878",
+    progress=None,
+    collect_only: bool = False,
+) -> int | list[Annotation]:
+    """Annotate Barnard dark nebulae using the VizieR VII/220A catalogue."""
+    import csv
+    import io
+    import requests
+    from astropy.coordinates import SkyCoord
+    import astropy.units as u
+
+    cache_dir = Path.home() / ".astroframe" / "reference_catalogs"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    catalogue_path = cache_dir / "barnard.tsv"
+
+    if not catalogue_path.is_file():
+        if progress:
+            progress("Downloading Barnard dark-nebula catalogue…")
+        response = requests.get(
+            "https://vizier.cds.unistra.fr/viz-bin/asu-tsv"
+            "?-source=VII/220A/barnard&-out.max=unlimited",
+            timeout=60,
+        )
+        response.raise_for_status()
+        data = response.text
+        assert "Barn" in data and "_RA.icrs" in data, "Invalid Barnard catalogue"
+        temporary_path = catalogue_path.with_suffix(".tmp")
+        temporary_path.write_text(data, encoding="utf-8")
+        temporary_path.replace(catalogue_path)
+
+    width, height = image_dimensions(image_path)
+    centre_ra, centre_dec, radius = image_sky_coverage(
+        wcs_path, width, height
+    )
+    image_centre = SkyCoord(
+        ra=centre_ra * u.deg, dec=centre_dec * u.deg, frame="icrs"
+    )
+
+    if progress:
+        progress("Reading Barnard dark nebulae…")
+
+    lines = [
+        line for line in catalogue_path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    rows = list(csv.DictReader(io.StringIO("\n".join(lines)), delimiter="\t"))
+    annotations = []
+
+    for row in rows:
+        number = (row.get("Barn") or "").strip()
+        if not number.isdigit():
+            continue
+        try:
+            coord = SkyCoord(
+                row["_RA.icrs"], row["_DE.icrs"],
+                unit=(u.hourangle, u.deg), frame="icrs",
+            )
+            diameter = float(row.get("Diam") or 0)
+        except (ValueError, TypeError, KeyError):
+            continue
+
+        if coord.separation(image_centre).deg > radius + diameter / 120 + 0.02:
+            continue
+
+        try:
+            if diameter > 0:
+                x, y, major_px, minor_px, angle = galaxy_ellipse_pixels(
+                    wcs_path, float(coord.ra.deg), float(coord.dec.deg),
+                    diameter, diameter, 0, image_height=height,
+                )
+            else:
+                x, y = sky_to_pixel(
+                    wcs_path, float(coord.ra.deg), float(coord.dec.deg),
+                    image_height=height,
+                )
+                major_px = minor_px = angle = 0.0
+        except (ValueError, KeyError, ZeroDivisionError):
+            continue
+
+        if not (0 <= x < width and 0 <= y < height):
+            continue
+
+        annotations.append(Annotation(
+            name=f"B {int(number)}",
+            prefer_marker=True,
+            x=x, y=y,
+            major_arcmin=diameter,
+            minor_arcmin=diameter,
+            major_radius_px=major_px,
+            minor_radius_px=minor_px,
+            image_angle_deg=angle,
+            colour=colour,
+        ))
+
+    if collect_only:
+        return annotations
+
+    render_annotated_image(image_path, annotations, output_path, colour=colour)
     return len(annotations)
