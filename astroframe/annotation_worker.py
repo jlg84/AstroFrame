@@ -126,6 +126,29 @@ class AnnotationWorker(QObject):
                 ))
 
             self._check_cancelled()
+
+            # Avoid duplicating the titled primary subject in the catalogue
+            # annotations. Normalize spacing and leading zeros in IDs.
+            if self.primary_subject and self.primary_subject.get("name"):
+                import re
+
+                def normalized_identifier(value):
+                    text = str(value or "").strip().upper()
+                    match = re.fullmatch(
+                        r"(NGC|IC|M)\s*0*(\d+)", text
+                    )
+                    if match:
+                        return f"{match.group(1)}{int(match.group(2))}"
+                    return " ".join(text.split())
+
+                primary_id = normalized_identifier(
+                    self.primary_subject["name"]
+                )
+                annotations = [
+                    item for item in annotations
+                    if normalized_identifier(item.name) != primary_id
+                ]
+
             count = len(annotations)
             if annotations:
                 self.progress.emit(f"Rendering {count} annotations together…")
