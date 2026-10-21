@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from .version import window_title
 from datetime import date, datetime, timedelta
 from dataclasses import replace
 
@@ -387,7 +388,7 @@ class MainWindow(QMainWindow):
             Qt.ConnectionType.QueuedConnection,
         )
 
-        self.setWindowTitle("AstroFrame 1.0 RC22v")
+        self.setWindowTitle(window_title())
         self.resize(1320, 860)
         self.setMinimumSize(1040, 680)
 
@@ -5281,7 +5282,7 @@ class MainWindow(QMainWindow):
         self.summary_visibility.clear()
         self._reset_field_objects_state()
         self._refresh_collections_summary()
-        self.setWindowTitle("AstroFrame 1.0 RC22v")
+        self.setWindowTitle(window_title())
         self.width_spin.setEnabled(True)
 
         # dev16e: a random new image starts with genuinely unknown scale.

@@ -1,4 +1,7 @@
 from PyInstaller.utils.hooks import collect_submodules
+from pathlib import Path
+
+APP_VERSION = Path("VERSION").read_text(encoding="utf-8").strip()
 
 hiddenimports = collect_submodules('astropy')
 
@@ -7,6 +10,7 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[
+        ('VERSION', '.'),
         ('assets/AstroFrame_1024.png', 'assets'),
         ('data/equipment_catalog_v1.json', 'data'),
     ],
@@ -33,7 +37,7 @@ app = BUNDLE(
     info_plist={
         'CFBundleName': 'AstroFrame',
         'CFBundleDisplayName': 'AstroFrame',
-        'CFBundleShortVersionString': '1.1.0',
+        'CFBundleShortVersionString': APP_VERSION,
         'CFBundleVersion': '1',
         'NSHighResolutionCapable': True,
     },

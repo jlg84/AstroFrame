@@ -1,6 +1,6 @@
-# Installing AstroFrame 1.1.0 on macOS
+# Installing AstroFrame 1.1.1 on macOS
 
-AstroFrame 1.1.0 is distributed as a macOS disk image (DMG).
+AstroFrame 1.1.1 is distributed as a macOS disk image (DMG).
 
 ## Install
 
@@ -11,7 +11,7 @@ AstroFrame 1.1.0 is distributed as a macOS disk image (DMG).
 
 ## First-launch security notice
 
-AstroFrame 1.1.0 is not yet Developer ID signed and notarized. macOS may therefore refuse the first launch even when the package came directly from the AstroFrame project owner.
+AstroFrame 1.1.1 is not yet Developer ID signed and notarized. macOS may therefore refuse the first launch even when the package came directly from the AstroFrame project owner.
 
 Only override macOS security if you expected this AstroFrame build and received it from a source you trust. After attempting to open AstroFrame, macOS may offer **Open Anyway** under **System Settings → Privacy & Security**. Once approved, subsequent launches should behave normally.
 

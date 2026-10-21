@@ -2,7 +2,18 @@
 
 This changelog records major public-development milestones. The many intermediate release-candidate builds were iterative development snapshots rather than separate public releases.
 
-## 1.1.0 — In preparation
+## 1.1.1 — 2026-10-21
+
+Maintenance release.
+
+### Fixed
+
+- Correct outdated application version numbers in the main window title.
+- Read the displayed version from the central VERSION file.
+- Keep macOS bundle metadata synchronized with the application version.
+- Preserve the correct version title when opening or resetting images.
+
+## 1.1.0 — 2026-10-21
 
 ### AstroFrame Annotate
 

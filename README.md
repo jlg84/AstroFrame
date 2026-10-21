@@ -4,7 +4,7 @@ AstroFrame is a cross-platform astrophotography framing and planning desktop app
 
 ## Current status
 
-**AstroFrame 1.1.0 — release preparation**
+**AstroFrame 1.1.1 — maintenance release**
 
 AstroFrame is a cross-platform Python/Qt desktop application for astrophotography framing, equipment selection, observing planning and image annotation.
 

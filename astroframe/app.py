@@ -7,6 +7,7 @@ from PySide6.QtWidgets import QApplication
 from .flexible_import_dialog import run_flexible_collection_import_dialog
 from .rc1_onboarding import install_rc1_onboarding_fixes
 from .window import MainWindow
+from .version import window_title
 
 
 STYLE_SHEET = """
@@ -358,6 +359,6 @@ def run() -> int:
     install_rc1_onboarding_fixes(MainWindow)
 
     window = MainWindow()
-    window.setWindowTitle("AstroFrame 1.0.2")
+    window.setWindowTitle(window_title())
     window.show()
     return app.exec()
