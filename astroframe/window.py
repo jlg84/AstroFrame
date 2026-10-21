@@ -7,6 +7,11 @@ from dataclasses import replace
 import json
 import math
 import re
+import shutil
+import subprocess
+import sys
+import tempfile
+from uuid import uuid4
 import textwrap
 
 import requests
@@ -58,7 +63,9 @@ from .plate_solve import (
     PlateSolution,
     SolveCache,
 )
-from .solve_worker import PlateSolveWorker
+from .solve_worker import PlateSolveWorker, WcsRecoveryWorker
+from .annotation_worker import AnnotationWorker
+from .galaxy_catalogue import find_galaxy_catalogue
 from .astrobin_import import AstroBinImportWorker
 from .observer import (
     ObserverProfile,
@@ -301,6 +308,7 @@ class MainWindow(QMainWindow):
     solve_cancelled_ui = Signal(int, str)
     solve_log_ui = Signal(str, int, str)
     general_log_ui = Signal(str)
+    wcs_recovered_ui = Signal(object, str, object, str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -311,6 +319,10 @@ class MainWindow(QMainWindow):
         self.current_image_path: str | None = None
         self.current_image_size = (0, 0)
         self.current_solution: PlateSolution | None = None
+        self.wcs_recovery_thread = None
+        self.wcs_recovery_worker = None
+        self._wcs_recovery_image_hash = None
+        self._wcs_recovery_attempted_hashes = set()
         self._advisor_refresh_pending = False
         # The recommendation currently being composed on the image.  Once an
         # alternative is chosen, dragging its rig frame or changing its rotation
@@ -320,6 +332,7 @@ class MainWindow(QMainWindow):
         self.solve_thread: QThread | None = None
         self.solve_worker: PlateSolveWorker | None = None
         self.solve_request_id = 0
+        self._wcs_temp_paths: dict[int, Path] = {}
         self.solve_in_progress = False
         self._pending_assisted_solve: tuple[float, float, float, str] | None = None
         self._pending_auto_solve: tuple[str, float | None, float | None, float | None, str | None] | None = None
@@ -351,6 +364,10 @@ class MainWindow(QMainWindow):
         )
         self.solve_success_ui.connect(
             self._solve_succeeded_for_request,
+            Qt.ConnectionType.QueuedConnection,
+        )
+        self.wcs_recovered_ui.connect(
+            self._wcs_recovered_for_image,
             Qt.ConnectionType.QueuedConnection,
         )
         self.solve_failure_ui.connect(
@@ -581,6 +598,26 @@ class MainWindow(QMainWindow):
         self.solve_button.setEnabled(False)
         self.solve_button.clicked.connect(lambda _checked=False: self.plate_solve())
         reference.layout.addWidget(self.solve_button)
+
+        self.annotate_button = QPushButton("Annotate Image…")
+        self.annotate_button.setEnabled(False)
+        self.annotate_button.clicked.connect(self.annotate_image)
+        self.annotate_button.setToolTip(
+            "Identify and label galaxies, nebulae and star clusters using the image's plate-solved WCS. "
+            "The annotated image is saved as a new file; the original is unchanged."
+        )
+        reference.layout.addWidget(self.annotate_button)
+
+        self.cancel_annotation_button = QPushButton("Cancel Annotation")
+        self.cancel_annotation_button.setEnabled(False)
+        self.cancel_annotation_button.hide()
+        self.cancel_annotation_button.clicked.connect(self.cancel_annotation)
+        reference.layout.addWidget(self.cancel_annotation_button)
+
+        self.annotation_progress_label = QLabel("")
+        self.annotation_progress_label.setWordWrap(True)
+        self.annotation_progress_label.hide()
+        reference.layout.addWidget(self.annotation_progress_label)
 
         self.online_fallback_button = QPushButton("Try Astrometry.net blind solve…")
         self.online_fallback_button.setToolTip(
@@ -5213,6 +5250,7 @@ class MainWindow(QMainWindow):
         self.solve_request_id += 1
         self.current_image_path = path
         self.current_solution = None
+        self.annotate_button.setEnabled(False)
         self.solve_in_progress = False
         self.solving_hint_name = None
         self.solving_hint_ra_hours = None
@@ -5528,6 +5566,15 @@ class MainWindow(QMainWindow):
         self.solve_details.hide()
 
         self.solve_thread = QThread(self)
+        wcs_temp_dir = Path(tempfile.gettempdir()) / "astroframe-wcs"
+        wcs_temp_dir.mkdir(parents=True, exist_ok=True)
+        next_request_id = self.solve_request_id + 1
+        wcs_temp_path = wcs_temp_dir / (
+            f"solve-{next_request_id}-{uuid4().hex}.wcs"
+        )
+        wcs_temp_path.unlink(missing_ok=True)
+        self._wcs_temp_paths[next_request_id] = wcs_temp_path
+
         self.solve_worker = PlateSolveWorker(
             solver_preference=solver_preference,
             api_key=api_key,
@@ -5539,6 +5586,7 @@ class MainWindow(QMainWindow):
             target_dec_deg=target_dec_deg,
             target_search_radius_deg=target_search_radius_deg,
             astrometry_job_reference=astrometry_job_reference,
+            wcs_output_path=wcs_temp_path,
         )
         solve_path = self.current_image_path
         self.solve_request_id += 1
@@ -5579,6 +5627,642 @@ class MainWindow(QMainWindow):
             lambda t=thread, w=worker: self._solve_finished_for(t, w)
         )
         self.solve_thread.start()
+
+    def annotate_image(self) -> None:
+        """Start galaxy annotation without changing the original image."""
+        if getattr(self, "annotation_thread", None) is not None:
+            return
+
+        if not self.current_image_path or self.current_solution is None:
+            QMessageBox.information(
+                self, "Annotate Image", "Load and plate-solve an image first."
+            )
+            return
+
+        source = Path(self.current_image_path)
+        wcs = self.solve_cache.wcs_path_for(source)
+        if not wcs.is_file():
+            QMessageBox.warning(
+                self, "WCS unavailable", "Run a fresh local ASTAP solve first."
+            )
+            return
+
+
+        options_dialog = QDialog(self)
+        options_dialog.setWindowTitle("Annotate Image")
+        options_layout = QVBoxLayout(options_dialog)
+
+        preset_label = QLabel("Annotation preset")
+        options_layout.addWidget(preset_label)
+        preset_combo = QComboBox()
+        preset_combo.addItem("Presentation", "presentation")
+        preset_combo.addItem("Atlas", "atlas")
+        preset_combo.addItem("Custom", "custom")
+        options_layout.addWidget(preset_combo)
+
+        restore_preset_button = QPushButton("Restore Preset Defaults")
+        options_layout.addWidget(restore_preset_button)
+
+        select_all_check = QCheckBox("Select all object types")
+        options_layout.addWidget(select_all_check)
+
+        galaxies_check = QCheckBox("Galaxies")
+        galaxies_check.setChecked(True)
+        options_layout.addWidget(galaxies_check)
+
+        galaxy_detail_label = QLabel("Galaxy annotation detail")
+        options_layout.addWidget(galaxy_detail_label)
+
+        galaxy_detail_combo = QComboBox()
+        galaxy_detail_combo.addItem(
+            "Featured (1.0′ minimum)", "featured"
+        )
+        galaxy_detail_combo.addItem(
+            "Detailed (0.3′ minimum, up to 100)", "detailed"
+        )
+        options_layout.addWidget(galaxy_detail_combo)
+
+        galaxy_detail_label.setEnabled(False)
+        galaxy_detail_combo.setEnabled(False)
+
+        def update_galaxy_detail_enabled(checked):
+            galaxy_detail_label.setEnabled(checked)
+            galaxy_detail_combo.setEnabled(checked)
+
+        galaxies_check.toggled.connect(update_galaxy_detail_enabled)
+        update_galaxy_detail_enabled(galaxies_check.isChecked())
+
+        grid_check = QCheckBox("RA/Dec coordinate grid")
+        options_layout.addWidget(grid_check)
+
+        outlines_check = QCheckBox("Show object outlines")
+        outlines_check.setChecked(True)
+        options_layout.addWidget(outlines_check)
+
+
+        subject_title_check = QCheckBox("Show primary subject title")
+        subject_title_check.setChecked(True)
+        options_layout.addWidget(subject_title_check)
+
+        nebula_check = QCheckBox("Nebulae (OpenNGC)")
+        options_layout.addWidget(nebula_check)
+
+        cluster_check = QCheckBox("Other star clusters (OpenNGC)")
+        options_layout.addWidget(cluster_check)
+
+        planetary_check = QCheckBox("Planetary nebulae")
+        options_layout.addWidget(planetary_check)
+
+        open_cluster_check = QCheckBox("Open clusters")
+        options_layout.addWidget(open_cluster_check)
+
+        globular_check = QCheckBox("Globular clusters")
+        options_layout.addWidget(globular_check)
+
+        dark_nebula_check = QCheckBox("Dark nebulae (Barnard catalogue)")
+        options_layout.addWidget(dark_nebula_check)
+
+        imported_collections_check = QCheckBox("Imported collection objects")
+        options_layout.addWidget(imported_collections_check)
+
+        bica_check = QCheckBox("Bica objects (Magellanic Clouds)")
+        options_layout.addWidget(bica_check)
+
+        bica_detail_label = QLabel("Bica annotation detail")
+        options_layout.addWidget(bica_detail_label)
+        bica_detail_combo = QComboBox()
+        bica_detail_combo.addItem("Featured (up to 30 objects)", "featured")
+        bica_detail_combo.addItem("Detailed (up to 100 objects)", "detailed")
+        options_layout.addWidget(bica_detail_combo)
+
+        bica_detail_label.setEnabled(False)
+        bica_detail_combo.setEnabled(False)
+
+        def update_bica_detail_enabled(checked):
+            bica_detail_label.setEnabled(checked)
+            bica_detail_combo.setEnabled(checked)
+
+        bica_check.toggled.connect(update_bica_detail_enabled)
+
+        bright_stars_check = QCheckBox("Bright stars (Yale Bright Star Catalogue)")
+        options_layout.addWidget(bright_stars_check)
+
+        star_magnitude_label = QLabel("Bright-star magnitude limit")
+        options_layout.addWidget(star_magnitude_label)
+        star_magnitude_combo = QComboBox()
+        for magnitude in (2.0, 3.0, 4.0, 5.0, 6.0, 7.0):
+            star_magnitude_combo.addItem(f"{magnitude:.1f}", magnitude)
+        saved_magnitude = float(self.settings.value("annotationStarMagnitudeLimit", 6.0))
+        magnitude_index = star_magnitude_combo.findData(saved_magnitude)
+        star_magnitude_combo.setCurrentIndex(
+            magnitude_index if magnitude_index >= 0 else 4
+        )
+        star_magnitude_combo.setEnabled(False)
+        star_magnitude_label.setEnabled(False)
+        options_layout.addWidget(star_magnitude_combo)
+
+        def update_star_magnitude_enabled(checked):
+            star_magnitude_combo.setEnabled(checked)
+            star_magnitude_label.setEnabled(checked)
+
+        bright_stars_check.toggled.connect(update_star_magnitude_enabled)
+
+        object_checks = (
+            galaxies_check,
+            nebula_check,
+            cluster_check,
+            planetary_check,
+            open_cluster_check,
+            globular_check,
+            dark_nebula_check,
+            imported_collections_check,
+            bica_check,
+            bright_stars_check,
+        )
+
+        def toggle_all_object_types(checked):
+            for checkbox in object_checks:
+                checkbox.setChecked(checked)
+
+        def update_select_all():
+            select_all_check.blockSignals(True)
+            select_all_check.setChecked(
+                all(checkbox.isChecked() for checkbox in object_checks)
+            )
+            select_all_check.blockSignals(False)
+
+        select_all_check.toggled.connect(toggle_all_object_types)
+        for checkbox in object_checks:
+            checkbox.toggled.connect(update_select_all)
+        update_select_all()
+
+        # Output resolution for the finished annotated image.
+        output_size_label = QLabel("Output image size")
+        options_layout.addWidget(output_size_label)
+        output_size_combo = QComboBox()
+        output_size_combo.addItem("Full resolution (original size)", 0)
+        output_size_combo.addItem("Large (2400 px)", 2400)
+        output_size_combo.addItem("Web / Email (1600 px)", 1600)
+        saved_size = int(self.settings.value("annotationOutputSize", 2400))
+        saved_index = output_size_combo.findData(saved_size)
+        output_size_combo.setCurrentIndex(max(0, saved_index))
+        options_layout.addWidget(output_size_combo)
+
+        style_label = QLabel("Annotation style")
+        options_layout.addWidget(style_label)
+        style_combo = QComboBox()
+        style_combo.addItem("Automatic (recommended)", "automatic")
+        style_combo.addItem("Catalogue outlines", "outlines")
+        style_combo.addItem("Identification markers", "markers")
+        saved_style = self.settings.value("annotationStyle", "automatic")
+        style_index = style_combo.findData(saved_style)
+        style_combo.setCurrentIndex(max(0, style_index))
+        options_layout.addWidget(style_combo)
+
+        # Each annotation preset has its own persistent configuration.
+        import json
+
+        def annotation_preset_settings_key(preset):
+            return f"annotationPreset/{preset}"
+
+        def load_annotation_preset(preset):
+            raw = self.settings.value(
+                annotation_preset_settings_key(preset), ""
+            )
+            if not raw:
+                return None
+            try:
+                data = json.loads(raw)
+                return data if isinstance(data, dict) else None
+            except (TypeError, ValueError):
+                return None
+
+        def save_annotation_preset(preset, data):
+            self.settings.setValue(
+                annotation_preset_settings_key(preset),
+                json.dumps(data),
+            )
+
+        def capture_annotation_configuration():
+            return {
+                "galaxies": galaxies_check.isChecked(),
+                "galaxy_detail": str(galaxy_detail_combo.currentData()),
+                "grid": grid_check.isChecked(),
+                "show_outlines": outlines_check.isChecked(),
+                "subject_title": subject_title_check.isChecked(),
+                "nebulae": nebula_check.isChecked(),
+                "clusters": cluster_check.isChecked(),
+                "planetary": planetary_check.isChecked(),
+                "open_clusters": open_cluster_check.isChecked(),
+                "globular": globular_check.isChecked(),
+                "dark_nebulae": dark_nebula_check.isChecked(),
+                "imported_collections": imported_collections_check.isChecked(),
+                "bica": bica_check.isChecked(),
+                "bica_detail": str(bica_detail_combo.currentData()),
+                "bright_stars": bright_stars_check.isChecked(),
+                "star_magnitude": float(star_magnitude_combo.currentData()),
+                "style": str(style_combo.currentData()),
+            }
+
+        def restore_annotation_configuration(data):
+            if not isinstance(data, dict):
+                return
+
+            checkbox_settings = (
+                ("galaxies", galaxies_check),
+                ("grid", grid_check),
+                ("show_outlines", outlines_check),
+                ("subject_title", subject_title_check),
+                ("nebulae", nebula_check),
+                ("clusters", cluster_check),
+                ("planetary", planetary_check),
+                ("open_clusters", open_cluster_check),
+                ("globular", globular_check),
+                ("dark_nebulae", dark_nebula_check),
+                ("imported_collections", imported_collections_check),
+                ("bica", bica_check),
+                ("bright_stars", bright_stars_check),
+            )
+
+            for key, checkbox in checkbox_settings:
+                if isinstance(data.get(key), bool):
+                    checkbox.setChecked(data[key])
+
+            if "galaxy_detail" in data:
+                index = galaxy_detail_combo.findData(data["galaxy_detail"])
+                if index >= 0:
+                    galaxy_detail_combo.setCurrentIndex(index)
+
+            if "bica_detail" in data:
+                index = bica_detail_combo.findData(data["bica_detail"])
+                if index >= 0:
+                    bica_detail_combo.setCurrentIndex(index)
+
+            if "star_magnitude" in data:
+                index = star_magnitude_combo.findData(
+                    data["star_magnitude"]
+                )
+                if index >= 0:
+                    star_magnitude_combo.setCurrentIndex(index)
+
+            if "style" in data:
+                index = style_combo.findData(data["style"])
+                if index >= 0:
+                    style_combo.setCurrentIndex(index)
+
+        # Keep separate working configurations for each preset.
+        preset_updating = False
+        active_preset = "presentation"
+        working_configs = {}
+
+        def default_annotation_configuration(preset):
+            atlas = preset == "atlas"
+            return {
+                "galaxies": True,
+                "galaxy_detail": "featured",
+                "grid": atlas,
+                "show_outlines": True,
+                "subject_title": True,
+                "nebulae": True,
+                "clusters": atlas,
+                "planetary": atlas,
+                "open_clusters": atlas,
+                "globular": atlas,
+                "dark_nebulae": atlas,
+                "imported_collections": atlas,
+                "bica": atlas,
+                "bica_detail": "featured",
+                "bright_stars": atlas,
+                "star_magnitude": 6.0,
+                "style": "outlines" if atlas else "automatic",
+            }
+
+        for preset in ("presentation", "atlas"):
+            working_configs[preset] = {
+                **default_annotation_configuration(preset),
+                **(load_annotation_preset(preset) or {}),
+            }
+
+        def apply_annotation_preset(index):
+            nonlocal preset_updating, active_preset
+            preset = preset_combo.itemData(index)
+            if preset not in ("presentation", "atlas"):
+                return
+
+            if not preset_updating:
+                working_configs[active_preset] = (
+                    capture_annotation_configuration()
+                )
+
+            active_preset = preset
+            preset_updating = True
+            try:
+                restore_annotation_configuration(
+                    working_configs[preset]
+                )
+            finally:
+                preset_updating = False
+
+        def mark_annotation_custom(*args):
+            if preset_updating:
+                return
+
+            working_configs[active_preset] = (
+                capture_annotation_configuration()
+            )
+            preset_combo.blockSignals(True)
+            try:
+                preset_combo.setCurrentIndex(
+                    preset_combo.findData("custom")
+                )
+            finally:
+                preset_combo.blockSignals(False)
+
+        def restore_current_preset_defaults():
+            nonlocal preset_updating
+
+            defaults = default_annotation_configuration(active_preset)
+            working_configs[active_preset] = defaults.copy()
+
+            preset_updating = True
+            try:
+                restore_annotation_configuration(defaults)
+                preset_combo.setCurrentIndex(
+                    preset_combo.findData(active_preset)
+                )
+            finally:
+                preset_updating = False
+
+        restore_preset_button.clicked.connect(
+            restore_current_preset_defaults
+        )
+
+        preset_combo.currentIndexChanged.connect(apply_annotation_preset)
+
+        for checkbox in (
+            *object_checks,
+            grid_check,
+            outlines_check,
+            subject_title_check,
+        ):
+            checkbox.toggled.connect(mark_annotation_custom)
+
+        galaxy_detail_combo.currentIndexChanged.connect(mark_annotation_custom)
+        bica_detail_combo.currentIndexChanged.connect(mark_annotation_custom)
+        style_combo.currentIndexChanged.connect(mark_annotation_custom)
+        star_magnitude_combo.currentIndexChanged.connect(mark_annotation_custom)
+
+        # Restore the last-used preset without overwriting its settings.
+        saved_preset = str(
+            self.settings.value(
+                "annotationLastPreset", "presentation"
+            )
+        )
+        if saved_preset not in ("presentation", "atlas"):
+            saved_preset = "presentation"
+
+        active_preset = saved_preset
+        preset_updating = True
+        try:
+            restore_annotation_configuration(
+                working_configs[saved_preset]
+            )
+            preset_combo.setCurrentIndex(
+                preset_combo.findData(saved_preset)
+            )
+        finally:
+            preset_updating = False
+
+        options_buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel
+        )
+        options_buttons.accepted.connect(options_dialog.accept)
+        options_buttons.rejected.connect(options_dialog.reject)
+        options_layout.addWidget(options_buttons)
+        ok_button = options_buttons.button(QDialogButtonBox.StandardButton.Ok)
+        def update_annotation_ok():
+            ok_button.setEnabled(
+                galaxies_check.isChecked()
+                or grid_check.isChecked()
+                or subject_title_check.isChecked()
+                or nebula_check.isChecked()
+                or cluster_check.isChecked()
+                or planetary_check.isChecked()
+                or open_cluster_check.isChecked()
+                or globular_check.isChecked()
+                or dark_nebula_check.isChecked()
+                or bright_stars_check.isChecked()
+            )
+
+        galaxies_check.toggled.connect(update_annotation_ok)
+        grid_check.toggled.connect(update_annotation_ok)
+        subject_title_check.toggled.connect(update_annotation_ok)
+        nebula_check.toggled.connect(update_annotation_ok)
+        cluster_check.toggled.connect(update_annotation_ok)
+        planetary_check.toggled.connect(update_annotation_ok)
+        open_cluster_check.toggled.connect(update_annotation_ok)
+        globular_check.toggled.connect(update_annotation_ok)
+        dark_nebula_check.toggled.connect(update_annotation_ok)
+        bright_stars_check.toggled.connect(update_annotation_ok)
+        update_annotation_ok()
+        if options_dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        # Save both preset configurations only when OK is clicked.
+        working_configs[active_preset] = capture_annotation_configuration()
+        for preset in ("presentation", "atlas"):
+            save_annotation_preset(preset, working_configs[preset])
+        self.settings.setValue("annotationLastPreset", active_preset)
+
+
+        catalogue = find_galaxy_catalogue()
+        include_galaxies = galaxies_check.isChecked()
+        if include_galaxies and catalogue is None:
+            choice = QMessageBox.question(
+                self,
+                "Galaxy catalogue unavailable",
+                "AstroFrame could not find the HyperLEDA galaxy catalogue.\n\n"
+                "HyperLEDA is required for galaxy outlines and labels. "
+                "It can be installed as part of the ASTAP catalogue data.\n\n"
+                "Would you like to continue with the other selected annotations?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Yes,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                return
+            include_galaxies = False
+
+        suggested = source.with_name(source.stem + "-Annotated.png")
+        selected, _ = QFileDialog.getSaveFileName(
+            self, "Save Annotated Image", str(suggested),
+            "PNG images (*.png)",
+        )
+        if not selected:
+            return
+
+        output = Path(selected)
+        if output.suffix.lower() != ".png":
+            output = output.with_suffix(".png")
+
+        if output.resolve() == source.resolve():
+            QMessageBox.warning(
+                self, "Original protected",
+                "The original photograph cannot be overwritten.",
+            )
+            return
+
+
+        output_max_edge = int(output_size_combo.currentData())
+        self.settings.setValue("annotationOutputSize", output_max_edge)
+        annotation_style = str(style_combo.currentData())
+        self.settings.setValue("annotationStyle", annotation_style)
+
+        selected_openngc = (
+            nebula_check.isChecked()
+            or cluster_check.isChecked()
+            or planetary_check.isChecked()
+            or open_cluster_check.isChecked()
+            or globular_check.isChecked()
+        )
+        self.annotation_grid_only = (
+            grid_check.isChecked()
+            and not include_galaxies
+            and not selected_openngc
+        )
+        self.annotation_has_catalogue_objects = selected_openngc
+
+        self.annotate_button.setEnabled(False)
+        self.annotate_button.setText("Annotating…")
+        self.cancel_annotation_button.setEnabled(True)
+        self.cancel_annotation_button.show()
+        self.annotation_progress_label.setText("Starting annotation…")
+        self.annotation_progress_label.show()
+        self._append_solver_log(f"Annotation started: {source.name}")
+
+        thread = QThread(self)
+        worker = AnnotationWorker(
+            source,
+            wcs,
+            catalogue,
+            output,
+            include_galaxies=include_galaxies,
+            galaxy_detail=str(galaxy_detail_combo.currentData()),
+            include_grid=grid_check.isChecked(),
+            include_nebulae=nebula_check.isChecked(),
+            include_clusters=cluster_check.isChecked(),
+            include_planetary_nebulae=planetary_check.isChecked(),
+            include_open_clusters=open_cluster_check.isChecked(),
+            include_globular_clusters=globular_check.isChecked(),
+            include_dark_nebulae=dark_nebula_check.isChecked(),
+            include_bright_stars=bright_stars_check.isChecked(),
+            star_magnitude_limit=float(star_magnitude_combo.currentData()),
+            output_max_edge=output_max_edge,
+            annotation_style=annotation_style,
+            show_outlines=outlines_check.isChecked(),
+            include_imported_collections=imported_collections_check.isChecked(),
+            include_bica=bica_check.isChecked(),
+            bica_detail=str(bica_detail_combo.currentData()),
+            primary_subject=self._cached_target_for_current_image(),
+            show_subject_title=subject_title_check.isChecked(),
+        )
+        self.annotation_thread = thread
+        self.annotation_worker = worker
+
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._annotation_progress)
+        worker.succeeded.connect(self._annotation_succeeded)
+        worker.failed.connect(self._annotation_failed)
+        worker.cancelled.connect(self._annotation_cancelled)
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(self._annotation_finished)
+        thread.finished.connect(thread.deleteLater)
+        thread.start()
+
+    def cancel_annotation(self) -> None:
+        worker = getattr(self, "annotation_worker", None)
+        if worker is None:
+            return
+        worker.cancel()
+        self.cancel_annotation_button.setEnabled(False)
+        self.annotation_progress_label.setText(
+            "Cancelling… waiting for the current processing stage to finish."
+        )
+        self._append_solver_log("Annotation cancellation requested")
+
+    @Slot()
+    def _annotation_cancelled(self) -> None:
+        self._append_solver_log("Annotation cancelled")
+        self.annotation_progress_label.setText("Annotation cancelled.")
+
+    @Slot(str)
+    def _annotation_progress(self, message: str) -> None:
+        if not self.cancel_annotation_button.isEnabled():
+            return
+        self.annotation_progress_label.setText(message)
+        self._append_solver_log(f"Annotation: {message}")
+
+    @Slot(int, str)
+    def _annotation_succeeded(self, count: int, output_path: str) -> None:
+        self._append_solver_log(
+            f"Annotation complete: {count} objects — {output_path}"
+        )
+
+        dialog = QMessageBox(self)
+        dialog.setWindowTitle("Annotation complete")
+        dialog.setIcon(QMessageBox.Icon.Information)
+        if getattr(self, "annotation_grid_only", False):
+            dialog.setText("Coordinate grid added.")
+        elif getattr(self, "annotation_has_catalogue_objects", False):
+            dialog.setText(f"Annotated {count} objects.")
+        else:
+            dialog.setText(f"Annotated {count} galaxies.")
+        dialog.setInformativeText(f"Saved to:\\n{output_path}")
+
+        open_button = dialog.addButton(
+            "Open Folder", QMessageBox.ButtonRole.ActionRole
+        )
+        ok_button = dialog.addButton(QMessageBox.StandardButton.Ok)
+        dialog.setEscapeButton(ok_button)
+        dialog.exec()
+
+        if dialog.clickedButton() == open_button:
+            try:
+                if sys.platform == "darwin":
+                    subprocess.Popen(["open", "-R", output_path])
+                elif sys.platform == "win32":
+                    subprocess.Popen(["explorer", "/select,", str(Path(output_path))])
+                else:
+                    subprocess.Popen(["xdg-open", str(Path(output_path).parent)])
+            except OSError as exc:
+                QMessageBox.warning(
+                    self, "Cannot open folder", str(exc)
+                )
+
+    @Slot(str)
+    def _annotation_failed(self, message: str) -> None:
+        self._append_solver_log(f"Annotation failed: {message}")
+        QMessageBox.warning(self, "Annotation failed", message)
+
+    @Slot()
+    def _annotation_finished(self) -> None:
+        self.annotation_thread = None
+        self.annotation_worker = None
+        self.cancel_annotation_button.setEnabled(False)
+        self.cancel_annotation_button.hide()
+        self.annotation_progress_label.hide()
+        self.annotate_button.setText("Annotate Image…")
+        self.annotate_button.setEnabled(
+            bool(
+                self.current_image_path
+                and self.current_solution is not None
+                and self.solve_cache.wcs_path_for(
+                    self.current_image_path
+                ).is_file()
+            )
+        )
 
     def cancel_solve(self) -> None:
         if self.solve_worker is None or not self.solve_in_progress:
@@ -6313,6 +6997,26 @@ class MainWindow(QMainWindow):
         self._show_estimated_status()
 
     def closeEvent(self, event) -> None:
+        recovery_thread = getattr(self, "wcs_recovery_thread", None)
+        if recovery_thread is not None and recovery_thread.isRunning():
+            QMessageBox.information(
+                self,
+                "WCS recovery in progress",
+                "Please wait for WCS recovery to finish before closing AstroFrame.",
+            )
+            event.ignore()
+            return
+
+        annotation_thread = getattr(self, "annotation_thread", None)
+        if annotation_thread is not None:
+            QMessageBox.information(
+                self,
+                "Annotation in progress",
+                "Please wait for image annotation to finish before closing AstroFrame.",
+            )
+            event.ignore()
+            return
+
         self.settings.setValue("geometry", self.saveGeometry())
         if self.current_solution is None and self.width_spin.value() > 0:
             self.settings.setValue("referenceWidthEstimate", self.width_spin.value())
@@ -6348,6 +7052,7 @@ class MainWindow(QMainWindow):
                     status="success",
                 )
             self._apply_solution(cached, cached=True)
+            self._start_wcs_recovery(path, cached)
         else:
             self.solve_in_progress = False
             self.current_solution = None
@@ -6362,6 +7067,87 @@ class MainWindow(QMainWindow):
             self.solve_details.clear()
             self.solve_details.hide()
             self._show_estimated_status()
+
+    @Slot(object, str, object, str)
+    def _wcs_recovered_for_image(self, data: bytes, image_path: str, solution: PlateSolution, original_hash: str) -> None:
+        if self.current_image_path != image_path or self.current_solution != solution:
+            return
+        if self.current_image_size[0] <= 0 or self.current_image_size[1] <= 0:
+            return
+        try:
+            if self.solve_cache.image_hash(image_path) != original_hash:
+                self._append_solver_log("WCS recovery discarded: image contents changed.")
+                return
+            import os
+            import tempfile
+            destination = self.solve_cache.wcs_path_for(image_path)
+            if destination.is_file():
+                return
+            fd, temporary = tempfile.mkstemp(prefix="wcs-", suffix=".tmp", dir=destination.parent)
+            try:
+                with os.fdopen(fd, "wb") as handle:
+                    handle.write(data)
+                os.replace(temporary, destination)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+            self.annotate_button.setEnabled(
+                getattr(self, "annotation_thread", None) is None
+            )
+            self._append_solver_log("Astrometry.net: missing WCS recovered from existing job; no new solve required.")
+        except Exception as exc:
+            self._append_solver_log(f"WCS recovery could not be saved: {exc}")
+
+    def _start_wcs_recovery(self, image_path: str, solution: PlateSolution) -> None:
+        if self.wcs_recovery_thread is not None:
+            return
+        if solution.solver != "Astrometry.net" or solution.job_id is None:
+            return
+        if self.solve_cache.wcs_path_for(image_path).is_file():
+            return
+        image_hash = self.solve_cache.image_hash(image_path)
+        if image_hash in self._wcs_recovery_attempted_hashes:
+            return
+        self._wcs_recovery_attempted_hashes.add(image_hash)
+        self._wcs_recovery_image_hash = image_hash
+        thread = QThread(self)
+        worker = WcsRecoveryWorker(
+            solution.job_id,
+            self.current_image_size,
+            solution.pixel_scale_arcsec,
+            solution.ra_deg,
+            solution.dec_deg,
+        )
+        self.wcs_recovery_thread = thread
+        self.wcs_recovery_worker = worker
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.succeeded.connect(
+            lambda data, path=image_path, sol=solution, digest=image_hash:
+                self.wcs_recovered_ui.emit(data, path, sol, digest)
+        )
+        worker.failed.connect(
+            lambda message: self.general_log_ui.emit(
+                f"Astrometry.net WCS recovery unavailable: {message}"
+            )
+        )
+        worker.finished.connect(thread.quit)
+        worker.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        thread.finished.connect(
+            lambda t=thread: self._wcs_recovery_finished(t)
+        )
+        self._append_solver_log("Astrometry.net: retrieving missing WCS from existing job...")
+        thread.start()
+
+    def _wcs_recovery_finished(self, thread: QThread) -> None:
+        if self.wcs_recovery_thread is thread:
+            self.wcs_recovery_thread = None
+            self.wcs_recovery_worker = None
+            image_path = self.current_image_path
+            solution = self.current_solution
+            if image_path and solution is not None:
+                self._start_wcs_recovery(image_path, solution)
 
     def _show_estimated_status(self) -> None:
         self.solve_status.setObjectName("estimatedStatus")
@@ -6389,14 +7175,37 @@ class MainWindow(QMainWindow):
     def _solve_succeeded_for_request(
         self, solution: PlateSolution, request_id: int, image_path: str
     ) -> None:
+        temp_wcs = self._wcs_temp_paths.pop(request_id, None)
         if not self._request_is_current(request_id, image_path):
+            if temp_wcs is not None:
+                temp_wcs.unlink(missing_ok=True)
             return
+
+        # Promote only this accepted request's WCS to the image cache.
+        if temp_wcs is not None:
+            try:
+                if temp_wcs.is_file():
+                    cached_wcs = self.solve_cache.wcs_path_for(image_path)
+                    cached_wcs.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(temp_wcs, cached_wcs)
+                    self._append_solver_log(
+                        "AstroFrame: ASTAP WCS saved alongside the image-fingerprint cache."
+                    )
+                temp_wcs.unlink(missing_ok=True)
+            except OSError as exc:
+                self._append_solver_log(
+                    f"AstroFrame: could not cache WCS sidecar: {exc}"
+                )
+
         self._solve_succeeded(solution)
 
     @Slot(str, int, str)
     def _solve_failed_for_request(
         self, message: str, request_id: int, image_path: str
     ) -> None:
+        temp_wcs = self._wcs_temp_paths.pop(request_id, None)
+        if temp_wcs is not None:
+            temp_wcs.unlink(missing_ok=True)
         if not self._request_is_current(request_id, image_path):
             return
         self._solve_failed(message)
@@ -6405,8 +7214,12 @@ class MainWindow(QMainWindow):
     def _solve_cancelled_for_request(
         self, request_id: int, image_path: str
     ) -> None:
+        temp_wcs = self._wcs_temp_paths.pop(request_id, None)
+        if temp_wcs is not None:
+            temp_wcs.unlink(missing_ok=True)
         if not self._request_is_current(request_id, image_path):
             return
+
         self.solve_in_progress = False
         self.current_solution = None
         self.solve_details.clear()
@@ -7093,6 +7906,22 @@ class MainWindow(QMainWindow):
         if not target_info or not target_info.get("name"):
             return True
         source = target_info.get("identification_source")
+
+        # A solver clue is not proof of the photographed subject. Reject
+        # cached identifications whose coordinates are outside the solved
+        # image, regardless of how the identification was originally made.
+        ra = target_info.get("subject_ra_deg")
+        dec = target_info.get("subject_dec_deg")
+        if ra is not None and dec is not None and self.current_solution is not None:
+            try:
+                subject_coord = SkyCoord(
+                    ra=float(ra), dec=float(dec), unit=("deg", "deg")
+                )
+                if not self._coord_is_inside_solution(subject_coord, self.current_solution):
+                    return True
+            except (TypeError, ValueError):
+                return True
+
         if source == "user_hint":
             return False
 
@@ -7246,6 +8075,15 @@ class MainWindow(QMainWindow):
         self.current_solution = solution
         self.online_fallback_button.hide()
 
+        # Full WCS is required for accurate galaxy annotations.
+        has_wcs = bool(
+            self.current_image_path
+            and self.solve_cache.wcs_path_for(self.current_image_path).is_file()
+        )
+        self.annotate_button.setEnabled(
+            has_wcs and getattr(self, "annotation_thread", None) is None
+        )
+
         # RC22x: a rig may already be checked before the image becomes solved.
         # Once accurate astrometry exists, establish an active framing rig
         # automatically so its visible frame is immediately draggable.
@@ -7309,15 +8147,9 @@ class MainWindow(QMainWindow):
 
         target_info = self._cached_target_for_current_image() if cached else None
         identify_after_render = False
-        if self.solving_hint_name:
-            target_info = {
-                "name": self.solving_hint_name,
-                "identification_source": "user_hint",
-                "identification_version": self.SUBJECT_IDENTIFICATION_VERSION,
-            }
-            if self.current_image_path:
-                self.solve_cache.update_metadata(self.current_image_path, target=target_info)
-        elif self._target_needs_identification(target_info):
+        # Solver clues assist astrometry; they are not independently verified
+        # identifications of the photographic subject.
+        if self._target_needs_identification(target_info):
             identify_after_render = True
             self.summary_target.setText("Target\nIdentifying…")
         else:
@@ -7536,6 +8368,23 @@ class MainWindow(QMainWindow):
     def _solve_finished_for(
         self, thread: QThread, worker: PlateSolveWorker
     ) -> None:
+        # Clean up any WCS left by this worker, including retired solves.
+        # This runs after the worker thread has finished.
+        temp_wcs = getattr(worker, "wcs_output_path", None)
+        if temp_wcs is not None:
+            temp_wcs = Path(temp_wcs)
+            self._wcs_temp_paths = {
+                request_id: path
+                for request_id, path in self._wcs_temp_paths.items()
+                if path != temp_wcs
+            }
+            try:
+                temp_wcs.unlink(missing_ok=True)
+            except OSError as exc:
+                self._append_solver_log(
+                    f"AstroFrame: could not remove temporary WCS: {exc}"
+                )
+
         # Retired jobs are allowed to wind down quietly after immediate UI
         # cancellation.  Never let an old thread clear a newer active solve.
         self._retired_solve_jobs = [

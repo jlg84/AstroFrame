@@ -2,7 +2,7 @@
 
 
 
-AstroFrame 1.0 is distributed for Windows as a ZIP archive containing the application and its supporting files.
+AstroFrame 1.1.0 is distributed for Windows as a ZIP archive containing the application and its supporting files.
 
 
 
@@ -60,7 +60,7 @@ Download the Windows ZIP package:
 
 
 
-`AstroFrame-1.0.0-Windows-x64.zip`
+`AstroFrame-1.1.0-Windows-x64.zip`
 
 
 
@@ -92,7 +92,7 @@ If Windows SmartScreen appears, inspect the warning and use \*\*More info → Ru
 
 
 
-The private RC1 Windows package is not currently code-signed.
+The Windows package is not currently code-signed.
 
 
 
@@ -112,11 +112,21 @@ If ASTAP cannot solve an image, AstroFrame may ask for a target-name or RA/Dec h
 
 
 
-\## 5. Updating AstroFrame
+\## Annotation catalogues
+
+AstroFrame 1.1 includes **AstroFrame Annotate**, which exports labelled astronomical photographs.
+
+- **Galaxies:** HyperLEDA (`hyperleda.csv`) is required for galaxy labels and outlines. It is not included in the standard AstroFrame package and is not downloaded automatically. If it is unavailable, AstroFrame offers to continue with the other selected annotations.
+- **Other astronomical objects:** OpenNGC, Barnard dark nebulae, Yale bright stars and Bica catalogue data are downloaded and cached when needed. Internet access may be required on first use.
+- **Coordinate grids:** These require a plate-solved image but not HyperLEDA.
+
+The ASTAP D50 star database supports plate solving; it is not a substitute for HyperLEDA.
+
+## 5. Updating AstroFrame
 
 
 
-For a newer private-test build, extract the new ZIP into a new folder rather than copying individual files over an older installation.
+For a newer release, extract the new ZIP into a new folder rather than copying individual files over an older installation.
 
 
 

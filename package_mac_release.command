@@ -6,7 +6,7 @@ cd "$(dirname "$0")"
 APP="dist/AstroFrame.app"
 VERSION="$(tr -d '\r\n' < VERSION)"
 RELEASE_DIR="release"
-STAGE_DIR="$RELEASE_DIR/dmg-staging"
+STAGE_DIR="/tmp/astroframe-release-staging-$$"
 DMG="$RELEASE_DIR/AstroFrame-${VERSION}-macOS-arm64.dmg"
 CHECKSUM="$DMG.sha256"
 
@@ -26,14 +26,29 @@ fi
 rm -rf "$STAGE_DIR"
 mkdir -p "$STAGE_DIR" "$RELEASE_DIR"
 
-# Preserve the app bundle exactly as tested.
-ditto "$APP" "$STAGE_DIR/AstroFrame.app"
+# Copy the built bundle without Finder metadata, preserving permissions.
+python3 - "$APP" "$STAGE_DIR/AstroFrame.app" <<'COPY_APP'
+import shutil
+import sys
+
+shutil.copytree(
+    sys.argv[1],
+    sys.argv[2],
+    symlinks=True,
+    copy_function=shutil.copy,
+)
+COPY_APP
+
+# Sign the clean copy, then verify it before packaging.
+codesign --force --deep --sign - "$STAGE_DIR/AstroFrame.app"
+codesign --verify --deep --strict "$STAGE_DIR/AstroFrame.app"
 ln -s /Applications "$STAGE_DIR/Applications"
 cp docs/MAC_INSTALL.md "$STAGE_DIR/READ ME FIRST.md"
 
 rm -f "$DMG" "$CHECKSUM"
 
 hdiutil create \
+  -fs HFS+ \
   -volname "AstroFrame $VERSION" \
   -srcfolder "$STAGE_DIR" \
   -ov \
@@ -48,12 +63,8 @@ echo
 echo "Created: $DMG"
 echo "Checksum: $CHECKSUM"
 echo
-echo "Code-signature verification:"
-codesign --verify --deep --strict --verbose=2 "$APP" || true
-
 echo
-echo "Gatekeeper assessment:"
-spctl -a -vv "$APP" || true
+
 
 echo
 echo "Important: this package is not Developer ID signed or notarized."

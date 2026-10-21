@@ -4,11 +4,13 @@ AstroFrame is a cross-platform astrophotography framing and planning desktop app
 
 ## Current status
 
-**AstroFrame 1.0 RC1 — private release-candidate testing**
+**AstroFrame 1.1.0 — release preparation**
 
-AstroFrame is built with Python/Qt and is intended to remain platform-independent. The macOS application has passed the RC1 smoke test from a clean GitHub build. The current release work is focused on installation/distribution testing with a small group of outside testers before wider release. Windows packaging and testing remain part of the 1.0 release work.
+AstroFrame is a cross-platform Python/Qt desktop application for astrophotography framing, equipment selection, observing planning and image annotation.
 
-The original browser prototype in this repository is historical and no longer represents the current application.
+Version 1.1 introduces **AstroFrame Annotate**, allowing plate-solved astrophotographs to be exported with astronomical object labels, outlines, coordinate grids and presentation-ready titles.
+
+The macOS and Windows 1.1 packages are being prepared and tested. The original browser prototype is retained only for project history.
 
 ## What AstroFrame does
 
@@ -25,7 +27,19 @@ The original browser prototype in this repository is historical and no longer re
 - Supports reframing, rotation and mosaic planning
 - Exports framing information for use in NINA and ASIAIR
 
-## macOS RC1 build and package
+## AstroFrame Annotate
+
+AstroFrame 1.1 can create annotated PNG images using the plate-solved coordinates of the original photograph.
+
+Annotation options include galaxy names and outlines, celestial coordinate grids, nebulae, star clusters, planetary nebulae, Barnard dark nebulae, bright stars, Bica objects and imported catalogue collections.
+
+Separate **Atlas** and **Presentation** presets let you retain different annotation configurations. Subject titles, annotation styles and output size can also be configured.
+
+Galaxy annotations require a locally installed HyperLEDA catalogue. If it is unavailable, AstroFrame offers to continue with the other selected annotations.
+
+Other reference catalogues are cached locally and may require internet access on first use.
+
+## macOS build and package
 
 Build the application from source with:
 
@@ -34,20 +48,20 @@ chmod +x build_mac_app.command
 ./build_mac_app.command
 ```
 
-After the resulting `dist/AstroFrame.app` has passed its smoke test, create the private-test disk image with:
+After the resulting `dist/AstroFrame.app` has passed its smoke test, create the macOS disk image with:
 
 ```bash
 chmod +x package_mac_release.command
 ./package_mac_release.command
 ```
 
-The packaging script creates a versioned macOS DMG and SHA-256 checksum under `release/`. It does not Developer ID sign or notarize the private RC1 package.
+The packaging script creates a versioned macOS DMG and SHA-256 checksum under `release/`. It does not Developer ID sign or notarize the package.
 
-See [macOS installation](docs/MAC_INSTALL.md) and the [RC1 tester guide](docs/RC1_TESTER_GUIDE.md).
+See [macOS installation](docs/MAC_INSTALL.md).
 
-The Windows package has passed its RC1 smoke test. Build/package instructions are provided below, and installation requirements are covered in the Windows installation guide.
+Windows build and packaging instructions are provided below. The 1.1 Windows package requires a fresh smoke test before release.
 
-## Windows RC1 build and package
+## Windows build and package
 
 Build the Windows application from a Windows Python environment with:
 
@@ -55,7 +69,7 @@ Build the Windows application from a Windows Python environment with:
 pyinstaller --clean --noconfirm AstroFrame-Windows.spec
 ```
 
-After `dist\AstroFrame\AstroFrame.exe` has passed its smoke test, create the private-test ZIP and SHA-256 checksum with:
+After `dist\AstroFrame\AstroFrame.exe` has passed its smoke test, create the Windows ZIP and SHA-256 checksum with:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File package_windows_release.ps1
@@ -65,7 +79,7 @@ The packaging script creates a versioned Windows x64 ZIP and checksum under `rel
 
 ASTAP and an ASTAP star database are required for normal local plate solving and are not bundled with AstroFrame.
 
-See [Windows installation](docs/WINDOWS_INSTALL.md) and the [RC1 tester guide](docs/RC1_TESTER_GUIDE.md).
+See [Windows installation](docs/WINDOWS_INSTALL.md).
 
 ## Core workflow
 
@@ -91,7 +105,7 @@ See [Windows installation](docs/WINDOWS_INSTALL.md) and the [RC1 tester guide](d
 
 ## Development note
 
-AstroFrame 1.0 RC1 is feature-frozen while installation and first-use behaviour are tested outside the development machines. Release-blocking bugs discovered during this phase may still be fixed; new feature ideas are deferred beyond RC1 unless they prevent normal use.
+AstroFrame 1.1 is undergoing release validation. Automated regression tests, macOS and Windows packaging checks, and fresh-installation smoke tests are required before publication.
 
 ## Repository owner
 
