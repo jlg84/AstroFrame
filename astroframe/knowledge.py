@@ -36,7 +36,7 @@ def catalogue_identifiers(value: str) -> set[str]:
     text = normalise_identifier(value)
     patterns = [
         r"\bNGC\s*\d+[A-Z]?\b", r"\bIC\s*\d+[A-Z]?\b",
-        r"\bM\s*\d+\b", r"\bRCW\s*\d+\b",
+        r"\bM\s*\d+\b(?!\s*-\s*\d)", r"\bRCW\s*\d+\b",
         r"\bLDN\s*\d+\b", r"\bLBN\s*\d+\b",
         r"\bSH2\s*[- ]?\s*\d+\b",
     ]
@@ -127,6 +127,8 @@ class KnowledgeStore:
         self.collections_root.mkdir(parents=True, exist_ok=True)
         self._targets: dict[str, TargetRecord] = {}
         self._load_targets()
+        self._target_name_index: dict[str, set[str]] = {}
+        self._rebuild_target_name_index()
         # RC22u one-time coordinate-precision migration. Older Imm imports
         # retained exact source strings but canonical targets used rounded
         # workbook display columns. Rebuild once with the corrected parser,
@@ -176,6 +178,46 @@ class KnowledgeStore:
         except (OSError, ValueError, TypeError, json.JSONDecodeError):
             self._targets = {}
 
+    @staticmethod
+    def _target_search_keys(target: TargetRecord) -> set[str]:
+        names = [
+            target.canonical_name,
+            target.common_name,
+            *target.aliases,
+        ]
+        keys = {
+            normalise_identifier(name)
+            for name in names if name
+        }
+        for name in names:
+            if name:
+                keys.update(catalogue_identifiers(name))
+        return keys
+
+    def _rebuild_target_name_index(self) -> None:
+        index: dict[str, set[str]] = {}
+        for target in self._targets.values():
+            for key in self._target_search_keys(target):
+                index.setdefault(key, set()).add(target.id)
+        self._target_name_index = index
+
+    def _index_target(self, target: TargetRecord) -> None:
+        for key in self._target_search_keys(target):
+            self._target_name_index.setdefault(key, set()).add(target.id)
+
+    def _replace_indexed_target(self, target: TargetRecord) -> None:
+        old = self._targets.get(target.id)
+        if old is not None:
+            for key in self._target_search_keys(old):
+                ids = self._target_name_index.get(key)
+                if ids is not None:
+                    ids.discard(old.id)
+                    if not ids:
+                        del self._target_name_index[key]
+
+        self._targets[target.id] = target
+        self._index_target(target)
+
     def _save_targets(self) -> None:
         payload = {
             "schema_version": 1,
@@ -184,9 +226,100 @@ class KnowledgeStore:
         self.targets_path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
 
     def upsert_target(self, incoming: TargetRecord, *, save: bool = True) -> TargetRecord:
-        existing = self.find_target(incoming.canonical_name, incoming.aliases)
+        # Retrieve matching identities through the name index rather than
+        # scanning every target for each imported catalogue entry.
+        wanted = {normalise_identifier(incoming.canonical_name)}
+        wanted.update(normalise_identifier(a) for a in incoming.aliases if a)
+        keys = set(wanted)
+        for name in wanted:
+            keys.update(catalogue_identifiers(name))
+
+        candidate_ids: set[str] = set()
+        for key in keys:
+            candidate_ids.update(self._target_name_index.get(key, ()))
+
+        # An exact target ID must not silently be replaced by a different
+        # object simply because another candidate shares an alias.
+        if incoming.id in self._targets:
+            candidate_ids.add(incoming.id)
+
+        candidates = [
+            self._targets[target_id]
+            for target_id in candidate_ids
+            if target_id in self._targets
+        ]
+
+        incoming_valid = self._coordinates_valid(
+            incoming.ra_deg, incoming.dec_deg
+        )
+
+        compatible = []
+        for candidate in candidates:
+            candidate_valid = self._coordinates_valid(
+                candidate.ra_deg, candidate.dec_deg
+            )
+
+            if incoming_valid and candidate_valid:
+                distance = self._field_offsets_deg(
+                    candidate.ra_deg, candidate.dec_deg,
+                    incoming.ra_deg, incoming.dec_deg,
+                )[2]
+                if distance <= 5.0:
+                    compatible.append((distance, candidate))
+            else:
+                # Without two valid sky positions, an ambiguous shared
+                # alias alone cannot establish that two objects are the
+                # same. Require a matching ID or canonical designation.
+                same_id = candidate.id == incoming.id
+                same_name = (
+                    normalise_identifier(candidate.canonical_name)
+                    == normalise_identifier(incoming.canonical_name)
+                )
+
+                if same_id or same_name:
+                    compatible.append((float("inf"), candidate))
+
+        existing = None
+        if compatible:
+            # A matching target ID takes precedence over a closer object
+            # that happens to share an alias. Coordinate compatibility
+            # has already been checked for every candidate.
+            existing = min(
+                compatible,
+                key=lambda item: (
+                    item[1].id != incoming.id,
+                    item[0],
+                    item[1].id,
+                ),
+            )[1]
+
+        if incoming.id in self._targets and (
+            existing is None or existing.id != incoming.id
+        ):
+            original = self._targets[incoming.id]
+            if (
+                incoming_valid
+                and self._coordinates_valid(
+                    original.ra_deg, original.dec_deg
+                )
+            ):
+                separation = self._field_offsets_deg(
+                    original.ra_deg, original.dec_deg,
+                    incoming.ra_deg, incoming.dec_deg,
+                )[2]
+                if separation > 5.0:
+                    raise ValueError(
+                        f"Conflicting coordinates for {incoming.id}: "
+                        f"{separation:.2f} degrees apart"
+                    )
+            raise ValueError(f"Target ID collision: {incoming.id}")
+
         if existing is None:
-            self._targets[incoming.id] = incoming
+            if incoming.id in self._targets:
+                raise ValueError(
+                    f"Target ID collision: {incoming.id}"
+                )
+            self._replace_indexed_target(incoming)
             if save:
                 self._save_targets()
             return incoming
@@ -213,7 +346,7 @@ class KnowledgeStore:
             constellation=existing.constellation or incoming.constellation,
             parent_region=existing.parent_region or incoming.parent_region,
         )
-        self._targets[existing.id] = merged
+        self._replace_indexed_target(merged)
         if save:
             self._save_targets()
         return merged
@@ -344,10 +477,38 @@ class KnowledgeStore:
 
     def coordinate_provenance(self, target_id: str) -> list[tuple[str, float, float, int]]:
         result: list[tuple[str, float, float, int]] = []
+        target = self._targets.get(target_id)
+        if target is None:
+            return []
+
+        known_names = [
+            target.canonical_name,
+            target.common_name,
+            *target.aliases,
+        ]
+        known = {
+            normalise_identifier(name)
+            for name in known_names if name
+        }
+        known_catalogues = set()
+        for name in known_names:
+            if name:
+                known_catalogues.update(catalogue_identifiers(name))
+
         for collection in self.list_collections():
             for entry in collection.entries:
                 if entry.target_id != target_id:
                     continue
+
+                source_name = normalise_identifier(entry.source_name)
+                source_catalogues = catalogue_identifiers(entry.source_name)
+
+                if not (
+                    source_name in known
+                    or (source_catalogues & known_catalogues)
+                ):
+                    continue
+
                 candidate = self._source_coordinate_candidate(entry)
                 if candidate is not None:
                     ra, dec, score = candidate

@@ -89,3 +89,49 @@ def test_valid_import_replaces_invalid_existing_coordinates(tmp_path):
     merged = store.upsert_target(incoming, save=False)
     assert merged.ra_deg == incoming.ra_deg
     assert merged.dec_deg == incoming.dec_deg
+
+
+def test_wrong_collection_identity_cannot_overwrite_coordinates(tmp_path):
+    from astroframe.knowledge import (
+        KnowledgeStore,
+        TargetRecord,
+        CollectionRecord,
+        CollectionEntry,
+    )
+
+    store = KnowledgeStore(tmp_path)
+
+    store.upsert_target(
+        TargetRecord(
+            id="m_1",
+            canonical_name="M1",
+            common_name="Crab Nebula",
+            ra_deg=83.633,
+            dec_deg=22.014,
+        ),
+        save=False,
+    )
+
+    collection = CollectionRecord(
+        id="wrong_identity_test",
+        name="Wrong Identity Test",
+        entries=[
+            CollectionEntry(
+                target_id="m_1",
+                source_name="NGC 1360",
+                source_fields={
+                    "_af_ra_deg": 53.3125,
+                    "_af_dec_deg": -25.871944,
+                    "_af_coord_precision": 50,
+                    "alternate_id": "M 1-3",
+                },
+            ),
+        ],
+    )
+
+    store.save_collection(collection)
+
+    target = store.get_target("m_1")
+    assert target is not None
+    assert target.ra_deg == 83.633
+    assert target.dec_deg == 22.014

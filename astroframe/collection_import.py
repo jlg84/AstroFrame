@@ -325,13 +325,7 @@ def import_gary_imm_targets(path: str | Path, store: KnowledgeStore) -> Collecti
             apparent_size_text=(f"{size_raw:g}′" if size_raw is not None else size_text),
             object_type=_text(val(row,type_i)), constellation=_text(val(row,const_i)),
         )
-        # Gary contains thousands of rows.  New IDs can be inserted directly;
-        # only genuine ID collisions need the more expensive merge path.
-        if incoming.id in store._targets:
-            target=store.upsert_target(incoming, save=False)
-        else:
-            store._targets[incoming.id]=incoming
-            target=incoming
+        target = store.upsert_target(incoming, save=False)
         if target.id in seen: continue
         seen.add(target.id)
         source_fields={
@@ -717,9 +711,7 @@ def import_flexible_collection(
             apparent_size_text=size_text, position_angle_deg=_float(_cell(row, mapping.get("position_angle"))),
             object_type=_text(_cell(row, mapping.get("object_type"))), constellation=_text(_cell(row, mapping.get("constellation"))),
         )
-        target = store.upsert_target(incoming, save=False) if incoming.id in store._targets else incoming
-        if incoming.id not in store._targets:
-            store._targets[incoming.id] = incoming
+        target = store.upsert_target(incoming, save=False)
         # Preserve every source-list row, even when two rows intentionally
         # describe the same physical object under different catalogue names.
         # Knowledge targets may merge aliases, but a BAM600-style observing
