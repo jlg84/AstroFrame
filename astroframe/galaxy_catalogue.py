@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+import sys
 from pathlib import Path
 
 
@@ -111,12 +113,21 @@ def galaxies_near_field(
 
 
 def find_galaxy_catalogue() -> Path | None:
-    """Find an installed or bundled HyperLEDA catalogue."""
+    """Find HyperLEDA in bundled resources or installed ASTAP directories."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parents[1]))
     candidates = [
-        Path(__file__).resolve().parent.parent / "data" / "hyperleda.csv",
+        base / "data" / "hyperleda.csv",
         Path.home() / "Library/Application Support/ASTAP/hyperleda.csv",
         Path("/usr/local/opt/astap/hyperleda.csv"),
         Path("/opt/homebrew/opt/astap/hyperleda.csv"),
         Path("/usr/share/astap/hyperleda.csv"),
     ]
+
+    for variable in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA", "APPDATA"):
+        root = os.environ.get(variable)
+        if root:
+            candidates.append(Path(root) / "astap" / "hyperleda.csv")
+
+    candidates.append(Path("C:/astap/hyperleda.csv"))
+
     return next((path for path in candidates if path.is_file()), None)

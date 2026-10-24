@@ -1,14 +1,16 @@
-﻿from PyInstaller.utils.hooks import collect_submodules
+﻿from PyInstaller.utils.hooks import collect_submodules, collect_data_files
 
 hiddenimports = collect_submodules("astropy")
+timezone_data = collect_data_files("tzdata")
 
 a = Analysis(
     ["main.py"],
     pathex=[],
     binaries=[],
-    datas=[
+    datas=timezone_data + [
         ("assets/AstroFrame_1024.png", "assets"),
         ("data/equipment_catalog_v1.json", "data"),
+        ("VERSION", "."),
     ],
     hiddenimports=hiddenimports,
     hookspath=[],
@@ -42,3 +44,5 @@ coll = COLLECT(
     upx=True,
     name="AstroFrame",
 )
+
+
