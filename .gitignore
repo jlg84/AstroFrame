@@ -10,3 +10,5 @@ build/
 dist/
 *.log
 release/
+
+data/hyperleda.csv

@@ -1,8 +1,8 @@
-\# AstroFrame — Windows installation
+﻿# AstroFrame - Windows installation
 
 
 
-AstroFrame 1.1.0 is distributed for Windows as a ZIP archive containing the application and its supporting files.
+AstroFrame 1.1.1 is distributed for Windows as a ZIP archive containing the application and its supporting files.
 
 
 
@@ -60,7 +60,7 @@ Download the Windows ZIP package:
 
 
 
-`AstroFrame-1.1.0-Windows-x64.zip`
+`AstroFrame-1.1.1-Windows-x64.zip`
 
 
 
@@ -88,7 +88,7 @@ Windows may display a security warning for an unsigned application downloaded fr
 
 
 
-If Windows SmartScreen appears, inspect the warning and use \*\*More info → Run anyway\*\* if you are satisfied that the package came from the AstroFrame project.
+If Windows SmartScreen appears, inspect the warning and use \*\*More info -> Run anyway\*\* if you are satisfied that the package came from the AstroFrame project.
 
 
 
@@ -121,6 +121,23 @@ AstroFrame 1.1 includes **AstroFrame Annotate**, which exports labelled astronom
 - **Coordinate grids:** These require a plate-solved image but not HyperLEDA.
 
 The ASTAP D50 star database supports plate solving; it is not a substitute for HyperLEDA.
+
+### Installing HyperLEDA for galaxy annotations
+
+HyperLEDA is optional and is not included in the AstroFrame download.
+
+To enable galaxy labels and outlines:
+
+1. Obtain the ASTAP/HNSKY-format `hyperleda.csv` galaxy catalogue.
+2. Press Win+R and enter `%LOCALAPPDATA%\astap`.
+3. Create the `astap` folder if it does not already exist.
+4. Copy `hyperleda.csv` into that folder.
+5. Restart AstroFrame.
+
+The resulting location is `%LOCALAPPDATA%\astap\hyperleda.csv`.
+
+AstroFrame will detect the catalogue automatically. It can remain in this location when AstroFrame is updated.
+
 
 ## 5. Updating AstroFrame
 
@@ -179,6 +196,7 @@ Restore the complete extracted `AstroFrame` folder. `AstroFrame.exe` depends on 
 
 
 A `.sha256` file is supplied alongside the Windows ZIP so that the downloaded archive can be checked against its published SHA-256 checksum.
+
 
 
 
