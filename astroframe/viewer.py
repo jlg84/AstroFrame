@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from pathlib import Path
+from PySide6.QtGui import QImage
+from .tiff_display import load_tiff_rgb
+
 from PySide6.QtCore import Qt, Signal, QPointF, QEvent, QTimer
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QPen, QPixmap, QPolygonF, QCursor
 from PySide6.QtWidgets import (
@@ -22,14 +26,19 @@ from .equipment import Rig
 class CatalogueDotItem(QGraphicsEllipseItem):
     """Catalogue centre with a generous invisible mouse target."""
     def __init__(self, target_id: str, x: float, y: float, callback) -> None:
-        self.hit_radius = 15.0
-        self.dot_radius = 6.0
+        self.hit_radius = 9.0
+        self.dot_radius = 3.0
         super().__init__(-self.hit_radius, -self.hit_radius, self.hit_radius*2, self.hit_radius*2)
         self.setPos(x, y)
+        # Keep catalogue markers readable at every image zoom level.
+        self.setFlag(
+            QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations,
+            True,
+        )
         self.target_id = target_id
         self.callback = callback
         self.setPen(QPen(Qt.PenStyle.NoPen))
-        self.setBrush(QBrush(Qt.BrushStyle.NoBrush))
+        self.setBrush(QBrush(QColor(0, 0, 0, 1)))
         self.setZValue(24)
         self.setToolTip("Click to identify this catalogue object")
         self.setAcceptedMouseButtons(Qt.MouseButton.LeftButton)
@@ -38,8 +47,8 @@ class CatalogueDotItem(QGraphicsEllipseItem):
 
         # A dark outer ring keeps the yellow marker legible over bright stars,
         # nebulosity and warm-toned image detail without making the overlay huge.
-        self.halo = QGraphicsEllipseItem(-8.0, -8.0, 16.0, 16.0, self)
-        self.halo.setPen(QPen(QColor(10, 10, 10, 210), 2.5))
+        self.halo = QGraphicsEllipseItem(-4.0, -4.0, 8.0, 8.0, self)
+        self.halo.setPen(QPen(QColor(10, 10, 10, 210), 1.5))
         self.halo.setBrush(QBrush(Qt.BrushStyle.NoBrush))
         self.halo.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
 
@@ -60,7 +69,7 @@ class CatalogueDotItem(QGraphicsEllipseItem):
     def hoverLeaveEvent(self, event) -> None:
         r = self.dot_radius
         self.dot.setRect(-r, -r, r*2, r*2)
-        self.halo.setRect(-8.0, -8.0, 16.0, 16.0)
+        self.halo.setRect(-4.0, -4.0, 8.0, 8.0)
         super().hoverLeaveEvent(event)
 
     def mousePressEvent(self, event) -> None:
@@ -160,8 +169,20 @@ class ImageViewer(QGraphicsView):
             overlay.set_frame_appearance(self.frame_colour_override, self.frame_line_width)
         self.viewport().update()
     def load_image(self,path):
-        pixmap=QPixmap(path)
-        if pixmap.isNull(): raise ValueError("The selected image could not be opened.")
+        pixmap = QPixmap(path)
+        if pixmap.isNull() and Path(path).suffix.lower() in (".tif", ".tiff"):
+            rgb = load_tiff_rgb(path)
+            height, width, _ = rgb.shape
+            image = QImage(
+                rgb.data,
+                width,
+                height,
+                rgb.strides[0],
+                QImage.Format.Format_RGB888,
+            )
+            pixmap = QPixmap.fromImage(image.copy())
+        if pixmap.isNull():
+            raise ValueError("The selected image could not be opened.")
         visible=[i.rig for i in self.overlays.values() if i.isVisible()]; self.scene.clear(); self.overlays.clear(); self.target_marker_items.clear(); self.target_marker_id=None; self.catalogue_dot_items.clear(); self.rig_rotation_offsets.clear(); self.pixmap_item=self.scene.addPixmap(pixmap); self.pixmap_item.setZValue(0); self.scene.setSceneRect(self.pixmap_item.boundingRect()); self.reset_view()
         for rig in visible:self.set_rig_visible(rig,True)
         self.image_loaded.emit(path,pixmap.width(),pixmap.height())
@@ -249,11 +270,23 @@ class ImageViewer(QGraphicsView):
             try:button=event.button();pos=event.position().toPoint()
             except Exception:return super().viewportEvent(event)
             if button==Qt.MouseButton.LeftButton and self.pixmap_item is not None:
+                # Let catalogue markers handle clicks before frame placement.
+                item = self.itemAt(pos)
+                while item is not None:
+                    if isinstance(item, CatalogueDotItem):
+                        return super().viewportEvent(event)
+                    item = item.parentItem()
                 scene_pos=self.mapToScene(pos);rect=self.pixmap_item.boundingRect();self.placement_clicked.emit(float(min(max(scene_pos.x(),rect.left()),rect.right())),float(min(max(scene_pos.y(),rect.top()),rect.bottom())));event.accept();return True
         if et==QEvent.Type.MouseButtonPress:
             try:button=event.button();pos=event.position().toPoint()
             except Exception:return super().viewportEvent(event)
             if button==Qt.MouseButton.LeftButton:
+                # Catalogue dots take priority over framing overlay dragging.
+                item = self.itemAt(pos)
+                while item is not None:
+                    if isinstance(item, CatalogueDotItem):
+                        return super().viewportEvent(event)
+                    item = item.parentItem()
                 overlay=self._active_overlay_at_view_pos(pos)
                 if overlay is not None:self._begin_overlay_drag(overlay,pos);event.accept();return True
         elif et==QEvent.Type.MouseMove and getattr(self,"_dragging_overlay",None) is not None:event.accept();return True
