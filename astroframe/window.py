@@ -6508,12 +6508,43 @@ class MainWindow(QMainWindow):
         return result
 
     def _resolve_target_coordinates(self, target: str) -> tuple[SkyCoord, str]:
-        errors=[]
-        for candidate in self._target_lookup_candidates(target):
+        """Resolve locally imported targets before consulting online name services.
+
+        Local catalogue coordinates are authoritative when present and valid.
+        This keeps imported targets usable offline and makes filename clues
+        consistent with manually entered solver clues.
+        """
+        try:
+            local_target = self.knowledge_store.find_target(target)
+        except Exception:
+            local_target = None
+
+        if local_target is not None and KnowledgeStore._coordinates_valid(
+            local_target.ra_deg, local_target.dec_deg
+        ):
+            coordinate = SkyCoord(
+                ra=float(local_target.ra_deg),
+                dec=float(local_target.dec_deg),
+                unit=("deg", "deg"),
+                frame="icrs",
+            )
+            return coordinate, local_target.canonical_name
+
+        candidates = self._target_lookup_candidates(target)
+
+        # Compact catalogue designations such as ngc3576 should also be
+        # offered to online resolvers in their conventional spaced form.
+        identifiers = catalogue_identifiers(target)
+        for identifier in sorted(identifiers):
+            if identifier not in candidates:
+                candidates.insert(0, identifier)
+
+        for candidate in candidates:
             try:
                 return SkyCoord.from_name(candidate), candidate
-            except Exception as exc:
-                errors.append(str(exc))
+            except Exception:
+                continue
+
         raise ValueError("No recognised catalogue or common-name match was found.")
 
     def _lookup_target_aliases(
