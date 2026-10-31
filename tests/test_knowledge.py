@@ -330,3 +330,45 @@ def test_exact_target_id_preferred_over_closer_alias(tmp_path):
     assert len(store._targets) == 2
     assert "New Alias" in store.get_target("original_object").aliases
     assert "New Alias" not in store.get_target("neighbour_object").aliases
+
+
+def test_curated_name_overrides_imported_common_name():
+    from astroframe.knowledge import preferred_display_name
+
+    target = TargetRecord(
+        id="ngc_3576",
+        canonical_name="NGC 3576",
+        common_name="Little Tarantula",
+        aliases=["Torch Bearer Nebula"],
+    )
+
+    assert preferred_display_name(target) == "Statue of Liberty Nebula"
+
+
+def test_curated_alternative_names_preserve_imported_aliases():
+    from astroframe.knowledge import preferred_alternative_names
+
+    target = TargetRecord(
+        id="ngc_3576",
+        canonical_name="NGC 3576",
+        common_name="Little Tarantula",
+        aliases=["Torch Bearer Nebula", "NGC 3576"],
+    )
+
+    alternatives = preferred_alternative_names(target)
+
+    assert "Little Tarantula" in alternatives
+    assert "Torch Bearer Nebula" in alternatives
+    assert "Statue of Liberty Nebula" not in alternatives
+
+
+def test_unknown_target_keeps_existing_display_name_behaviour():
+    from astroframe.knowledge import preferred_display_name
+
+    target = TargetRecord(
+        id="ngc_6188",
+        canonical_name="NGC 6188",
+        common_name="Dragons of Ara",
+    )
+
+    assert preferred_display_name(target) == "NGC 6188"

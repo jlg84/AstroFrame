@@ -48,8 +48,73 @@ def catalogue_identifiers(value: str) -> set[str]:
 
 
 
+# Curated display names take precedence over imported catalogue labels.
+# Keys are normalised catalogue designations. Imported names and aliases
+# remain unchanged and searchable.
+CURATED_TARGET_NAMES: dict[str, dict[str, object]] = {
+    "NGC 3576": {
+        "preferred": "Statue of Liberty Nebula",
+        "alternatives": [
+            "Little Tarantula",
+            "Torch Bearer Nebula",
+        ],
+    },
+}
+
+
+def curated_target_names(
+    target: "TargetRecord",
+) -> tuple[str | None, list[str]]:
+    """Return a curated preferred name and alternatives for a known target."""
+    names = [
+        target.canonical_name,
+        target.common_name,
+        *(target.aliases or []),
+    ]
+
+    for name in names:
+        if not name:
+            continue
+        for identifier in catalogue_identifiers(name):
+            entry = CURATED_TARGET_NAMES.get(identifier)
+            if entry:
+                preferred = str(entry["preferred"])
+                alternatives = list(entry.get("alternatives", []))
+                return preferred, alternatives
+
+    return None, []
+
+
+def preferred_alternative_names(target: "TargetRecord") -> list[str]:
+    """Return useful alternative names without duplicating the preferred name."""
+    preferred, curated = curated_target_names(target)
+    candidates = [
+        *(curated or []),
+        target.common_name,
+        *(target.aliases or []),
+    ]
+
+    result = []
+    seen = {preferred.casefold()} if preferred else set()
+
+    for name in candidates:
+        if not name:
+            continue
+        name = str(name).strip()
+        key = name.casefold()
+        if key not in seen:
+            seen.add(key)
+            result.append(name)
+
+    return result
+
+
 def preferred_display_name(target: "TargetRecord") -> str:
-    """Choose a concise catalogue label without changing stored identity."""
+    """Choose a curated or concise display name without changing stored identity."""
+    curated, _alternatives = curated_target_names(target)
+    if curated:
+        return curated
+
     names = [
         target.canonical_name,
         target.common_name,

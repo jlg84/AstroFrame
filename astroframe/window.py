@@ -84,6 +84,7 @@ from .knowledge import (
     catalogue_identifiers,
     normalise_identifier,
     preferred_display_name,
+    preferred_alternative_names,
 )
 from .collection_import import (
     FLEXIBLE_FIELDS,
@@ -5486,12 +5487,9 @@ class MainWindow(QMainWindow):
             display_name = preferred_display_name(target_record)
             details.append(f"Identified object: {display_name}")
 
-            if (
-                target_record.common_name
-                and target_record.common_name.casefold()
-                != display_name.casefold()
-            ):
-                details.append(f"Common name: {target_record.common_name}")
+            alternatives = preferred_alternative_names(target_record)
+            if alternatives:
+                details.append("Also known as: " + "; ".join(alternatives))
 
             details.append("Source: Imported target catalogue")
 
