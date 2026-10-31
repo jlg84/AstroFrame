@@ -5621,13 +5621,27 @@ class MainWindow(QMainWindow):
             )
         elif solver_preference == "astap":
             self.solve_status.setText(
-                "⏳  Solving locally with ASTAP using target hint…"
+                (
+                    f"⏳  Solving locally with ASTAP using filename clue "
+                    f"{self.solving_hint_name}…"
+                    if has_hint
+                    and self._filename_hint_decision == "accepted"
+                    and self.solving_hint_name
+                    else "⏳  Solving locally with ASTAP using target hint…"
+                )
                 if has_hint
                 else "⏳  Blind-solving locally with ASTAP…"
             )
         else:
             self.solve_status.setText(
-                "⏳  Trying ASTAP locally with target hint…"
+                (
+                    f"⏳  Trying ASTAP locally with filename clue "
+                    f"{self.solving_hint_name}…"
+                    if has_hint
+                    and self._filename_hint_decision == "accepted"
+                    and self.solving_hint_name
+                    else "⏳  Trying ASTAP locally with target hint…"
+                )
                 if has_hint
                 else "⏳  Trying ASTAP locally (blind solve)…"
             )
