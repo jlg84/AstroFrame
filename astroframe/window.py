@@ -352,6 +352,7 @@ class MainWindow(QMainWindow):
         self._reference_marker_cache: dict[tuple, tuple[list[tuple[str, float, float]], int, dict[str, object]]] = {}
         self._active_reference_query_key: tuple | None = None
         self.solving_hint_name: str | None = None
+        self._filename_hint_decision: str | None = None
         self.solving_hint_ra_hours: float | None = None
         self.solving_hint_dec_deg: float | None = None
         self.solving_hint_search_radius_deg: float | None = None
@@ -5261,6 +5262,7 @@ class MainWindow(QMainWindow):
         self.annotate_button.setEnabled(False)
         self.solve_in_progress = False
         self.solving_hint_name = None
+        self._filename_hint_decision = None
         self.solving_hint_ra_hours = None
         self.solving_hint_dec_deg = None
         self.solving_hint_search_radius_deg = None
@@ -5454,6 +5456,57 @@ class MainWindow(QMainWindow):
         )
         self.plate_solve(astrometry_job_reference=reference)
 
+    def _offer_filename_hint_before_solve(self) -> None:
+        """Offer a filename-derived clue before an initial local blind solve."""
+        if self._filename_hint_decision is not None:
+            return
+        if self.solving_hint_ra_hours is not None:
+            return
+
+        filename_hint = self._filename_catalogue_hint(self.current_image_path)
+        if not filename_hint:
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "Possible target found in filename",
+            f"The filename suggests {filename_hint}.\n\n"
+            f"Does this image include {filename_hint}?\n\n"
+            "Choose Yes to use it as a positional clue before solving, "
+            "or No to proceed with a blind solve.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+
+        if answer != QMessageBox.StandardButton.Yes:
+            self._filename_hint_decision = "declined"
+            self._append_solver_log(
+                f"Filename clue declined before solving: {filename_hint}"
+            )
+            return
+
+        self._filename_hint_decision = "accepted"
+        try:
+            centre, _targets = self._resolve_target_entry(filename_hint)
+        except Exception as exc:
+            self._append_solver_log(
+                f"Filename clue {filename_hint} could not be resolved: {exc}; "
+                "continuing without a clue"
+            )
+            return
+
+        self.solving_hint_name = filename_hint
+        self.solving_hint_ra_hours = float(centre.ra.hour)
+        self.solving_hint_dec_deg = float(centre.dec.deg)
+        self.solving_hint_search_radius_deg = 30.0
+        self.solving_hint_label.setText(
+            f"Solver clue\n{filename_hint} (from filename)"
+        )
+        self.assisted_solve_button.setText("Change Solver Clue…")
+        self._append_solver_log(
+            f"Filename clue confirmed before solving: {filename_hint}"
+        )
+
     def plate_solve(
         self,
         target_ra_hours: float | None = None,
@@ -5487,6 +5540,15 @@ class MainWindow(QMainWindow):
             )
             self._apply_solution(cached, cached=True)
             return
+
+        if (
+            target_ra_hours is None
+            and target_dec_deg is None
+            and astrometry_job_reference is None
+            and solver_preference_override is None
+            and str(self.solver_combo.currentData()) in {"automatic", "astap"}
+        ):
+            self._offer_filename_hint_before_solve()
 
         if target_ra_hours is None:
             target_ra_hours = self.solving_hint_ra_hours
@@ -8213,7 +8275,8 @@ class MainWindow(QMainWindow):
         # Before uploading, exploit a high-confidence catalogue token already present
         # in the filename, but only after asking the user to confirm that it is in-frame.
         if automatic and (local_exhausted or clue_exhausted):
-            if local_exhausted and self.solving_hint_ra_hours is None:
+            if (local_exhausted and self.solving_hint_ra_hours is None
+                    and self._filename_hint_decision is None):
                 filename_hint = self._filename_catalogue_hint(self.current_image_path)
                 if filename_hint:
                     answer = QMessageBox.question(
