@@ -6398,7 +6398,7 @@ class MainWindow(QMainWindow):
         """
         safe_target = " ".join(target.replace("\r", " ").replace("\n", " ").split())
         if not safe_target:
-            return None, []
+            return None, None, []
 
         script = (
             "output console=off script=off\n"
@@ -6414,7 +6414,7 @@ class MainWindow(QMainWindow):
             )
             response.raise_for_status()
         except requests.RequestException:
-            return None, []
+            return None, None, []
 
         text = response.text
         if "::data::" in text:
