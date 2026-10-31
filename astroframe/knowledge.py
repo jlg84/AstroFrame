@@ -47,6 +47,34 @@ def catalogue_identifiers(value: str) -> set[str]:
     return found
 
 
+
+def preferred_display_name(target: "TargetRecord") -> str:
+    """Choose a concise catalogue label without changing stored identity."""
+    names = [
+        target.canonical_name,
+        target.common_name,
+        *(target.aliases or []),
+    ]
+    identifiers = set()
+    for name in names:
+        if name:
+            identifiers.update(catalogue_identifiers(name))
+
+    for prefix in ("M", "NGC", "IC"):
+        matches = [
+            identifier for identifier in identifiers
+            if identifier.startswith(prefix + " ")
+        ]
+        if matches:
+            chosen = min(
+                matches,
+                key=lambda value: (int(re.match(r"\w+\s+(\d+)", value).group(1)), value),
+            )
+            return chosen.replace(" ", "", 1) if prefix == "M" else chosen
+
+    return target.canonical_name or target.common_name or target.id
+
+
 def target_id_for(canonical_name: str) -> str:
     normal = normalise_identifier(canonical_name)
     return slugify(normal)

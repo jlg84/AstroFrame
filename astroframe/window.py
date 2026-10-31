@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from .version import window_title
+from .coordinates import parse_target_coordinates
 from datetime import date, datetime, timedelta
 from dataclasses import replace
 
@@ -1609,7 +1610,8 @@ class MainWindow(QMainWindow):
         pos = self._target_pixel_position(target)
         if target is None or pos is None:
             return
-        display = target.canonical_name or target.common_name or target.id
+        from .knowledge import preferred_display_name
+        display = preferred_display_name(target)
         self.viewer.show_target_marker(target.id, display, pos[0], pos[1])
         self.statusBar().showMessage(f"Marked {display} on the image.", 3000)
 
@@ -2104,12 +2106,15 @@ class MainWindow(QMainWindow):
         check = self.rig_checks.get(rig_key)
         if check is None or not check.isChecked():
             return
+
         self._activate_reference_rig_framing(rig_key)
         self._apply_active_rig_emphasis()
         self._update_active_framing_rig_label()
         self._refresh_mosaic_preview()
         self._refresh_nina_export()
-        QTimer.singleShot(0, self._update_equipment_advisor)
+
+        # The available rigs have not changed, so the Equipment Advisor
+        # does not need to be recalculated when selecting the active rig.
         rig = next((r for r in self.available_rigs if r.key == rig_key), None)
         if rig is not None:
             self.statusBar().showMessage(f"Active framing rig: {rig.name}", 2500)
@@ -3282,6 +3287,8 @@ class MainWindow(QMainWindow):
             "sky_pa_deg": sky_pa,
         }
         self._accepted_framing = None
+        # Make the newly selected rig draggable immediately.
+        self.viewer.set_active_drag_rig(rig_key)
         self._update_active_framing_rig_label()
         ra_text, dec_text = self._format_framing_coords(
             float(self.current_solution.ra_deg), float(self.current_solution.dec_deg)
@@ -6528,50 +6535,7 @@ class MainWindow(QMainWindow):
         # particular, a comma between RA and Dec is a normal coordinate
         # separator and must not be mistaken for a separator between objects.
         raw_entry = text.strip()
-        coordinate = None
-
-        # Sexagesimal pair, with an optional comma:
-        #   20:10:14 +36:10:36
-        #   20:10:14, +36:10:36
-        sexagesimal = re.fullmatch(
-            r"\s*(\d{1,2}:\d{1,2}:\d{1,2}(?:\.\d+)?)\s*,?\s*([+-]\d{1,2}:\d{1,2}:\d{1,2}(?:\.\d+)?)\s*",
-            raw_entry,
-        )
-        if sexagesimal:
-            try:
-                coordinate = SkyCoord(
-                    f"{sexagesimal.group(1)} {sexagesimal.group(2)}",
-                    unit=("hourangle", "deg"),
-                    frame="icrs",
-                )
-            except Exception as exc:
-                raise ValueError(f"Could not parse the entered RA/Dec: {exc}") from exc
-
-        # Decimal pair, also with an optional comma.  Values above 24 are
-        # unambiguously RA degrees; 0..24 defaults to RA hours.  Requiring a
-        # signed Dec for the whitespace-only form keeps ordinary catalogue
-        # names/numbers from being misread as coordinates.
-        if coordinate is None:
-            decimal = re.fullmatch(
-                r"\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+)\s*[hHdD°]?)\s*(?:,\s*|\s+)([+-](?:\d+(?:\.\d*)?|\.\d+)\s*[dD°]?)\s*",
-                raw_entry,
-            )
-            if decimal:
-                left = decimal.group(1).strip()
-                right = decimal.group(2).strip()
-                ra_value = float(left.rstrip("dD°hH "))
-                dec_deg = float(right.rstrip("dD° "))
-                explicit_hours = left.lower().rstrip().endswith("h")
-                if not -90 <= dec_deg <= 90:
-                    raise ValueError("Declination must be between -90° and +90°.")
-                if explicit_hours or 0 <= ra_value < 24:
-                    if not 0 <= ra_value < 24:
-                        raise ValueError("RA hours must be between 0 and 24.")
-                    coordinate = SkyCoord(ra=ra_value, dec=dec_deg, unit=("hourangle", "deg"))
-                elif 0 <= ra_value < 360:
-                    coordinate = SkyCoord(ra=ra_value, dec=dec_deg, unit=("deg", "deg"))
-                else:
-                    raise ValueError("RA must be 0–24 hours or 0–360 degrees.")
+        coordinate = parse_target_coordinates(raw_entry)
 
         if coordinate is not None:
             return coordinate.icrs, [{
