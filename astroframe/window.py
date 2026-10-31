@@ -79,7 +79,12 @@ from .observer import (
     observability_for_date,
     tonight_bounds,
 )
-from .knowledge import KnowledgeStore, catalogue_identifiers, normalise_identifier
+from .knowledge import (
+    KnowledgeStore,
+    catalogue_identifiers,
+    normalise_identifier,
+    preferred_display_name,
+)
 from .collection_import import (
     FLEXIBLE_FIELDS,
     count_flexible_rows,
@@ -5457,7 +5462,7 @@ class MainWindow(QMainWindow):
         self.plate_solve(astrometry_job_reference=reference)
 
     def _offer_filename_hint_before_solve(self) -> None:
-        """Offer a filename-derived clue before an initial local blind solve."""
+        """Offer a filename-derived clue with catalogue context."""
         if self._filename_hint_decision is not None:
             return
         if self.solving_hint_ra_hours is not None:
@@ -5467,13 +5472,60 @@ class MainWindow(QMainWindow):
         if not filename_hint:
             return
 
+        target_record = None
+        try:
+            target_record = self.knowledge_store.find_target(filename_hint)
+        except Exception:
+            pass
+
+        details = [
+            f"Filename clue detected: {filename_hint}",
+        ]
+
+        if target_record is not None:
+            display_name = preferred_display_name(target_record)
+            details.append(f"Identified object: {display_name}")
+
+            if (
+                target_record.common_name
+                and target_record.common_name.casefold()
+                != display_name.casefold()
+            ):
+                details.append(f"Common name: {target_record.common_name}")
+
+            details.append("Source: Imported target catalogue")
+
+            try:
+                has_coordinates = KnowledgeStore._coordinates_valid(
+                    target_record.ra_deg,
+                    target_record.dec_deg,
+                )
+            except Exception:
+                has_coordinates = False
+
+            details.append(
+                "Local catalogue coordinates: Available"
+                if has_coordinates
+                else "Local catalogue coordinates: Not stored; "
+                     "AstroFrame will resolve the target before solving."
+            )
+        else:
+            details.append(
+                "Source: AstroFrame filename recognition"
+            )
+
+        details.extend([
+            "",
+            "Would you like to use this as a positional clue?",
+            "",
+            "Yes: use the target clue before solving.",
+            "No: proceed with a blind solve.",
+        ])
+
         answer = QMessageBox.question(
             self,
             "Possible target found in filename",
-            f"The filename suggests {filename_hint}.\n\n"
-            f"Does this image include {filename_hint}?\n\n"
-            "Choose Yes to use it as a positional clue before solving, "
-            "or No to proceed with a blind solve.",
+            "\n".join(details),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes,
         )
